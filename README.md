@@ -4,7 +4,7 @@ A high-performance, multi-core brute forcer for generating Chia wallet receive a
 
 This tool derives real wallet addresses from your mnemonic and searches for ones matching a prefix like:
 
-```text
+```
 xch1name...
 ```
 
@@ -22,18 +22,20 @@ xch1name...
 
 - Derives wallet addresses from your mnemonic (`m/12381/8444/2/i`)
 - Supports:
-    - hardened
-    - unhardened
-    - both derivation modes
-- Uses all CPU cores via `rayon`
-- Searches sequential indices until a match is found
+  - hardened
+  - unhardened
+  - both derivation modes
+- Uses all CPU cores
+- Supports two search modes:
+  - **fast** → returns first match (not lowest index)
+  - **lowest** → guarantees lowest index
 
 ---
 
 ## ⚙️ Requirements
 
 - Rust (stable)
-- A multi-core CPU (more cores = faster)
+- Multi-core CPU (more cores = faster)
 
 ---
 
@@ -54,7 +56,8 @@ cargo run --release -- \\
   [start_index] \\
   [chunk_size] \\
   [mode] \\
-  [threads]
+  [threads] \\
+  [search_mode]
 ```
 
 ### Example
@@ -64,90 +67,111 @@ cargo run --release -- \\
   "word1 word2 ... word24" \\
   xch1name \\
   0 \\
-  200000 \\
+  10000 \\
   unhardened \\
-  0
+  0 \\
+  fast
 ```
 
-### Arguments
+---
 
-| Argument | Description |
-|---|---|
-| mnemonic | Your 24-word seed phrase |
-| wanted_prefix | Target prefix, e.g. `xch1name` |
-| start_index | Optional start index (default: `0`) |
-| chunk_size | Batch size per iteration (default: `200000`) |
-| mode | `hardened`, `unhardened`, or `both` |
-| threads | Number of threads (`0` = auto / all cores) |
+## 🔀 Search modes
+
+### ⚡ fast (default)
+
+- Uses Rayon parallel iteration over entire range
+- Returns first match found by any thread
+- **Fastest**
+- **Index can be very large and non-sequential**
+
+Example:
+```
+index = 1610617400
+```
+
+This happens because the search space is split across threads.
+
+---
+
+### 🎯 lowest
+
+- Guarantees **smallest possible index**
+- Uses chunk-based coordination
+- Slightly slower
+- Better for wallet compatibility
 
 ---
 
 ## ⚡ Performance
 
-This is a **CPU-bound, embarrassingly parallel workload**, so:
+This is a CPU-bound, embarrassingly parallel workload:
 
-- More cores usually gives near-linear speedup
-- Better single-core performance also helps
+- More cores → near-linear speedup
+- Single-core performance still matters
 
 ### Real-world baseline
 
-On an Apple M2, a 4-character vanity search **after `xch1`** took about **100 seconds** in testing.
-
-That means something like:
-
-```text
-xch1name
-```
-
-where `name` is the brute-forced part.
+- Apple M2:
+  - ~100 seconds for 4 characters after `xch1`
 
 ---
 
 ## 🔢 Difficulty scaling
 
-Each additional character increases expected work by **32×**.
+Each extra character multiplies work by **32×**.
 
 | Characters after `xch1` | Expected attempts |
-|---|---:|
-| 4 | ~1,048,576 |
-| 5 | ~33,554,432 |
-| 6 | ~1,073,741,824 |
-
-So roughly:
-
-- 4 chars: seconds to minutes
-- 5 chars: minutes to hours
-- 6 chars: hours to days
+|------------------------|------------------|
+| 4                      | ~1 million       |
+| 5                      | ~33 million      |
+| 6                      | ~1 billion       |
 
 ---
 
 ## 🧠 Notes
 
-- The search space is large (~4.3 billion indices per derivation mode), but vanity targets are usually found much earlier.
-- Using `both` mode checks two derivations per index, which improves match rate per index but uses more CPU per index.
-- Very high indices may not be automatically discovered by wallet software without manual derivation.
+- Bech32 encoding means prefixes are not perfectly uniform
+- Early characters may have slight bias
+- `fast` mode may return very high indices due to parallel splitting
+- `lowest` mode ensures minimal index
 
 ---
 
 ## 🛠️ Tips
 
-- Start with `unhardened`
-- Keep indices relatively low if you want easier wallet compatibility
-- Run on a high-core machine for best results
+- Use `fast` for quick vanity search
+- Use `lowest` for deterministic result
+- Keep `chunk_size` small (1k–10k) for `lowest`
+- Use `unhardened` for modern wallets
 - Always use `--release`
 
 ---
 
 ## 🧾 Output
 
-When a match is found:
-
-```text
+```
 MATCH FOUND
 index   : 123456
 mode    : unhardened
 address : xch1name...
-elapsed : 42.13s
 ```
 
-You can later re-derive this address using the same mnemonic and index.
+---
+
+## 🚀 Recommended defaults
+
+| Setting      | Value       |
+|-------------|------------|
+| mode        | unhardened |
+| search_mode | fast       |
+| threads     | 0 (auto)   |
+| chunk_size  | 10000      |
+
+---
+
+## 💡 Summary
+
+- **fast** = maximum speed, random index
+- **lowest** = guaranteed smallest index
+
+Choose based on your goal.
