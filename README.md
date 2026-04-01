@@ -32,6 +32,17 @@ xch1name...
 
 ---
 
+## 🔤 Bech32m character set
+
+Chia addresses use **Bech32m encoding**, which only allows a specific set of characters.
+
+Valid characters (alphabetically sorted):
+```text
+023456789acdefghjklmnpqrstuvwxyz
+```
+
+---
+
 ## ⚙️ Requirements
 
 - Rust (stable)
