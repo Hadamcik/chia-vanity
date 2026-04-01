@@ -61,26 +61,26 @@ cargo build --release
 ## ▶️ Usage
 
 ```bash
-cargo run --release -- \\
-  "<your 24 word mnemonic>" \\
-  <wanted_prefix> \\
-  [start_index] \\
-  [chunk_size] \\
-  [mode] \\
-  [threads] \\
+cargo run --release -- \
+  "<your 24 word mnemonic>" \
+  <wanted_prefix> \
+  [start_index] \
+  [chunk_size] \
+  [mode] \
+  [threads] \
   [search_mode]
 ```
 
 ### Example
 
 ```bash
-cargo run --release -- \\
-  "word1 word2 ... word24" \\
-  xch1name \\
-  0 \\
-  10000 \\
-  unhardened \\
-  0 \\
+cargo run --release -- \
+  "word1 word2 ... word24" \
+  xch1name \
+  0 \
+  10000 \
+  unhardened \
+  0 \
   fast
 ```
 
