@@ -1,0 +1,11 @@
+[package]
+name = "chia-vanity-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chia-wallet-sdk = "0.33.0"
+bip39 = "2.2.0"
+rayon = "1.10"
+anyhow = "1"
+num_cpus = "1"
