@@ -22,5 +22,5 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chia-vanity = { path = "../../chia-vanity-sdk" }
+chia-vanity-sdk = { path = "../../chia-vanity-sdk" }
 

@@ -946,25 +946,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "chia-vanity"
+name = "chia-vanity-app"
+version = "0.1.0"
+dependencies = [
+ "chia-vanity-sdk",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+]
+
+[[package]]
+name = "chia-vanity-sdk"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bip39",
  "chia-wallet-sdk",
  "rayon",
-]
-
-[[package]]
-name = "chia-vanity-app"
-version = "0.1.0"
-dependencies = [
- "chia-vanity",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
 ]
 
 [[package]]
