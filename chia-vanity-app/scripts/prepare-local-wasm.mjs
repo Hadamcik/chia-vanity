@@ -8,14 +8,10 @@ const __dirname = path.dirname(__filename);
 const appRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(appRoot, '..');
 
-const vanityWasmRoot = path.join(repoRoot, 'chia-vanity-wasm');
-const vanityWasmPkg = path.join(vanityWasmRoot, 'pkg');
-
 const walletSdkRoot = path.join(repoRoot, 'external', 'chia-wallet-sdk', 'wasm');
 const walletSdkPkg = path.join(walletSdkRoot, 'pkg');
 
 const vendorPkgRoot = path.join(appRoot, 'vendor-pkg');
-const localVanityPkg = path.join(vendorPkgRoot, 'chia-vanity-wasm');
 const localWalletPkg = path.join(vendorPkgRoot, 'chia-wallet-sdk-wasm');
 
 const llvmPrefix = '/opt/homebrew/opt/llvm';
@@ -59,14 +55,10 @@ if (!existsDir(walletSdkRoot)) {
 
 mkdirp(vendorPkgRoot);
 
-console.log('Building chia-vanity-wasm...');
-runWasmPackBuild(vanityWasmRoot);
-
 console.log('Building chia-wallet-sdk-wasm...');
 runWasmPackBuild(walletSdkRoot);
 
 console.log('Copying local wasm packages...');
-copyDir(vanityWasmPkg, localVanityPkg);
 copyDir(walletSdkPkg, localWalletPkg);
 
 console.log('Local wasm packages prepared.');
