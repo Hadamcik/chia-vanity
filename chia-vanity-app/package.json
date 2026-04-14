@@ -7,7 +7,8 @@
     "prepare:wasm-local": "node ./scripts/prepare-local-wasm.mjs",
     "dev": "pnpm prepare:wasm-local && vite",
     "build": "pnpm prepare:wasm-local && tsc && vite build",
-    "preview": "vite preview",
+    "build:sage-package": "pnpm build && node ./scripts/build-sage-package.mjs",
+    "build:sage-zip": "pnpm build:sage-package && node ./scripts/zip-sage-package.mjs",
     "tauri": "pnpm prepare:wasm-local && tauri"
   },
   "dependencies": {
