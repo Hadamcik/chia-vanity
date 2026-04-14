@@ -1,0 +1,47 @@
+export type Mode = 'hardened' | 'unhardened' | 'both';
+export type SearchMode = 'fast' | 'lowest';
+export type UiState = 'idle' | 'running' | 'stopping';
+
+export interface SearchProgressPayload {
+    checked: number;
+    ratePerSec: number;
+    elapsedSecs: number;
+}
+
+export interface SearchHitPayload {
+    index: number;
+    mode: string;
+    address: string;
+}
+
+export interface SearchCompletedPayload {
+    hit: SearchHitPayload | null;
+}
+
+export interface SearchFailedPayload {
+    message: string;
+}
+
+export interface SearchStatePayload {
+    running: boolean;
+}
+
+export interface StartSearchRequest {
+    mnemonic: string;
+    wantedPrefix: string;
+    startIndex: number;
+    chunkSize: number;
+    mode: Mode;
+    workerCount: number;
+    searchMode: SearchMode;
+}
+
+export interface VanityRuntime {
+    startSearch(req: StartSearchRequest): Promise<void>;
+    stopSearch(): Promise<void>;
+    getSearchState(): Promise<SearchStatePayload>;
+    onSearchProgress(cb: (payload: SearchProgressPayload) => void): Promise<() => void>;
+    onSearchCompleted(cb: (payload: SearchCompletedPayload) => void): Promise<() => void>;
+    onSearchFailed(cb: (payload: SearchFailedPayload) => void): Promise<() => void>;
+    onSearchState(cb: (payload: SearchStatePayload) => void): Promise<() => void>;
+}
