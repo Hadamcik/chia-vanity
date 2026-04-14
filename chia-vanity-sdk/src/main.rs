@@ -6,8 +6,11 @@ use std::sync::{
 
 use anyhow::Result;
 
-use chia_vanity::search::run_search;
-use chia_vanity::types::{SearchMode, SearchRequest, SearchResult, Mode};
+use chia_vanity::search::run_search_with_generator;
+use chia_vanity::types::{Mode, SearchMode, SearchRequest, SearchResult};
+
+#[cfg(feature = "native-cli")]
+use chia_vanity::derive::{candidate_for_index, master_sk_from_mnemonic};
 
 fn print_usage(program: &str) {
     eprintln!(
@@ -84,15 +87,18 @@ fn main() -> Result<()> {
         request.search_mode
     );
 
+    let master_sk = master_sk_from_mnemonic(&request.mnemonic)?;
     let should_stop = Arc::new(AtomicBool::new(false));
 
-    let result = run_search(request, should_stop, |progress| {
+    let result = run_search_with_generator(request, should_stop, |progress| {
         eprintln!(
             "checked={} rate={:.0}/s elapsed={:.1}s",
             progress.checked,
             progress.rate_per_sec,
             progress.elapsed_secs
         );
+    }, move |index, mode, hrp| {
+        candidate_for_index(&master_sk, index, mode, hrp)
     })?;
 
     print_result(result);

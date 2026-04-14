@@ -4,8 +4,9 @@ use std::sync::{
 };
 use std::thread;
 
-use chia_vanity::search::run_search;
-use chia_vanity::types::{HitMode, Mode, SearchMode, SearchRequest};
+use chia_vanity::derive::{candidate_for_index, master_sk_from_mnemonic};
+use chia_vanity::search::run_search_with_generator;
+use chia_vanity::types::{Mode, SearchMode, SearchRequest, SearchResult};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -69,15 +70,9 @@ fn parse_search_mode(value: &str) -> Result<SearchMode, String> {
 }
 
 fn to_hit_payload(hit: chia_vanity::types::Hit) -> SearchHitPayload {
-    let mode = match hit.mode {
-        HitMode::Hardened => "hardened",
-        HitMode::Unhardened => "unhardened",
-    }
-        .to_string();
-
     SearchHitPayload {
         index: hit.index,
-        mode,
+        mode: hit.mode.as_str().to_string(),
         address: hit.address,
     }
 }
@@ -117,17 +112,14 @@ fn start_search(
     let should_stop = Arc::new(AtomicBool::new(false));
     set_running_flag(&state, Some(Arc::clone(&should_stop)))?;
 
-    app.emit(
-        "search-state",
-        SearchStatePayload { running: true },
-    )
+    app.emit("search-state", SearchStatePayload { running: true })
         .map_err(|err| err.to_string())?;
 
     let app_handle = app.clone();
 
     thread::spawn(move || {
         let request = SearchRequest {
-            mnemonic: req.mnemonic,
+            mnemonic: req.mnemonic.clone(),
             wanted_prefix: req.wanted_prefix,
             start_index: req.start_index,
             chunk_size: req.chunk_size,
@@ -136,24 +128,48 @@ fn start_search(
             search_mode,
         };
 
-        let result = run_search(request, Arc::clone(&should_stop), {
-            let app = app_handle.clone();
-            move |progress| {
-                let _ = app.emit(
-                    "search-progress",
-                    SearchProgressPayload {
-                        checked: progress.checked,
-                        rate_per_sec: progress.rate_per_sec,
-                        elapsed_secs: progress.elapsed_secs,
+        let master_sk = match master_sk_from_mnemonic(&req.mnemonic) {
+            Ok(value) => value,
+            Err(err) => {
+                let _ = app_handle.emit(
+                    "search-failed",
+                    SearchFailedPayload {
+                        message: err.to_string(),
                     },
                 );
+                let state = app_handle.state::<SearchController>();
+                let _ = set_running_flag(&state, None);
+                let _ = app_handle.emit(
+                    "search-state",
+                    SearchStatePayload { running: false },
+                );
+                return;
             }
-        });
+        };
+
+        let result = run_search_with_generator(
+            request,
+            Arc::clone(&should_stop),
+            {
+                let app = app_handle.clone();
+                move |progress| {
+                    let _ = app.emit(
+                        "search-progress",
+                        SearchProgressPayload {
+                            checked: progress.checked,
+                            rate_per_sec: progress.rate_per_sec,
+                            elapsed_secs: progress.elapsed_secs,
+                        },
+                    );
+                }
+            },
+            move |index, mode, hrp| candidate_for_index(&master_sk, index, mode, hrp),
+        );
 
         match result {
-            Ok(result) => {
+            Ok(SearchResult { hit }) => {
                 let payload = SearchCompletedPayload {
-                    hit: result.hit.map(to_hit_payload),
+                    hit: hit.map(to_hit_payload),
                 };
                 let _ = app_handle.emit("search-completed", payload);
             }

@@ -1,0 +1,22 @@
+[package]
+name = "chia-vanity-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-rayon = "1.3"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+
+chia-vanity-sdk = { path = "../chia-vanity-sdk", default-features = false }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

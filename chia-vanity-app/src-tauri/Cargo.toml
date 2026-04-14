@@ -1,8 +1,8 @@
 [package]
 name = "chia-vanity-app"
 version = "0.1.0"
-description = "A Tauri VanityApp"
-authors = ["you"]
+description = "Vanity App"
+authors = ["Jakub Hadamcik"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

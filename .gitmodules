@@ -1,0 +1,3 @@
+[submodule "external/chia-wallet-sdk"]
+	path = external/chia-wallet-sdk
+	url = https://github.com/xch-dev/chia-wallet-sdk.git

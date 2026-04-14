@@ -14,6 +14,12 @@ importers:
       '@tauri-apps/plugin-opener':
         specifier: ^2
         version: 2.5.3
+      chia-vanity-wasm:
+        specifier: file:./vendor-pkg/chia-vanity-wasm
+        version: file:vendor-pkg/chia-vanity-wasm
+      chia-wallet-sdk-wasm:
+        specifier: file:./vendor-pkg/chia-wallet-sdk-wasm
+        version: file:vendor-pkg/chia-wallet-sdk-wasm
       react:
         specifier: ^19.1.0
         version: 19.2.5
@@ -543,6 +549,12 @@ packages:
 
   caniuse-lite@1.0.30001788:
     resolution: {integrity: sha512-6q8HFp+lOQtcf7wBK+uEenxymVWkGKkjFpCvw5W25cmMwEDU45p1xQFBQv8JDlMMry7eNxyBaR+qxgmTUZkIRQ==}
+
+  chia-vanity-wasm@file:vendor-pkg/chia-vanity-wasm:
+    resolution: {directory: vendor-pkg/chia-vanity-wasm, type: directory}
+
+  chia-wallet-sdk-wasm@file:vendor-pkg/chia-wallet-sdk-wasm:
+    resolution: {directory: vendor-pkg/chia-wallet-sdk-wasm, type: directory}
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
@@ -1109,6 +1121,10 @@ snapshots:
       update-browserslist-db: 1.2.3(browserslist@4.28.2)
 
   caniuse-lite@1.0.30001788: {}
+
+  chia-vanity-wasm@file:vendor-pkg/chia-vanity-wasm: {}
+
+  chia-wallet-sdk-wasm@file:vendor-pkg/chia-wallet-sdk-wasm: {}
 
   convert-source-map@2.0.0: {}
 

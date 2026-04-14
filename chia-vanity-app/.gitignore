@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# built wasm packages (reproducible artifacts)
+vendor-pkg/

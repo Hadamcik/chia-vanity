@@ -1,18 +1,22 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::{BTreeMap, BTreeSet};
+
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    mpsc, Arc, Mutex,
+    Arc,
 };
-use std::thread;
-use std::time::{Duration, Instant};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{mpsc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
 
-use chia_wallet_sdk::chia::bls::SecretKey;
+use crate::types::{
+    ChunkResult, Hit, Mode, SearchMode, SearchProgress, SearchRequest, SearchResult,
+};
 
-use crate::derive::{candidate_for_index, master_sk_from_mnemonic};
-use crate::types::{ChunkResult, Hit, Mode, SearchMode, SearchProgress, SearchRequest, SearchResult};
+type CandidateGenerator = dyn Fn(u32, Mode, &str) -> Result<Vec<Hit>> + Send + Sync + 'static;
 
 struct SearchShared {
     checked: Arc<AtomicU64>,
@@ -23,13 +27,13 @@ struct SearchConfig {
     wanted_prefix: String,
     hrp: String,
     mode: Mode,
+    generator: Arc<CandidateGenerator>,
 }
 
 struct FastSearchContext<F>
 where
     F: Fn(SearchProgress) + Send + Sync + 'static,
 {
-    master_sk: Arc<SecretKey>,
     shared: SearchShared,
     config: SearchConfig,
     start_index: u64,
@@ -37,11 +41,11 @@ where
     progress: Arc<F>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct LowestSearchContext<F>
 where
     F: Fn(SearchProgress) + Send + Sync + 'static,
 {
-    master_sk: Arc<SecretKey>,
     shared: SearchShared,
     config: SearchConfig,
     start_index: u64,
@@ -58,8 +62,8 @@ fn address_matches(candidate_address: &str, wanted_prefix: &str) -> bool {
     candidate_address[..wanted_prefix.len()].eq_ignore_ascii_case(wanted_prefix)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn process_chunk(
-    master_sk: &SecretKey,
     start: u64,
     end: u64,
     config: &SearchConfig,
@@ -75,7 +79,7 @@ fn process_chunk(
             Err(_) => break,
         };
 
-        let candidates = match candidate_for_index(master_sk, index, config.mode, &config.hrp) {
+        let candidates = match (config.generator)(index, config.mode, &config.hrp) {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -102,21 +106,22 @@ fn process_chunk(
     }
 }
 
-fn spawn_progress_reporter<F>(
+#[cfg(not(target_arch = "wasm32"))]
+fn start_progress_reporter<F>(
     checked: Arc<AtomicU64>,
     should_stop: Arc<AtomicBool>,
-    started: Instant,
     progress: Arc<F>,
-) -> thread::JoinHandle<()>
+) -> Option<std::thread::JoinHandle<()>>
 where
     F: Fn(SearchProgress) + Send + Sync + 'static,
 {
-    thread::spawn(move || {
+    Some(std::thread::spawn(move || {
+        let started = std::time::Instant::now();
         let mut last = 0_u64;
-        let mut last_t = Instant::now();
+        let mut last_t = std::time::Instant::now();
 
         while !should_stop.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_secs(1));
+            std::thread::sleep(std::time::Duration::from_secs(1));
 
             let now = checked.load(Ordering::Relaxed);
             let delta = now.saturating_sub(last);
@@ -134,10 +139,32 @@ where
             });
 
             last = now;
-            last_t = Instant::now();
+            last_t = std::time::Instant::now();
         }
-    })
+    }))
 }
+
+#[cfg(target_arch = "wasm32")]
+fn start_progress_reporter<F>(
+    _checked: Arc<AtomicU64>,
+    _should_stop: Arc<AtomicBool>,
+    _progress: Arc<F>,
+) -> Option<()>
+where
+    F: Fn(SearchProgress) + Send + Sync + 'static,
+{
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn join_progress_reporter(handle: Option<std::thread::JoinHandle<()>>) {
+    if let Some(handle) = handle {
+        let _ = handle.join();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn join_progress_reporter(_handle: Option<()>) {}
 
 enum FastSearchOutcome {
     Hit(Hit),
@@ -148,11 +175,9 @@ fn run_fast_search<F>(ctx: FastSearchContext<F>) -> Result<Option<Hit>>
 where
     F: Fn(SearchProgress) + Send + Sync + 'static,
 {
-    let started = Instant::now();
-    let reporter = spawn_progress_reporter(
+    let reporter = start_progress_reporter(
         Arc::clone(&ctx.shared.checked),
         Arc::clone(&ctx.shared.should_stop),
-        started,
         Arc::clone(&ctx.progress),
     );
 
@@ -171,8 +196,7 @@ where
 
                 let index = u32::try_from(i).ok()?;
                 let candidates =
-                    candidate_for_index(&ctx.master_sk, index, ctx.config.mode, &ctx.config.hrp)
-                        .ok()?;
+                    (ctx.config.generator)(index, ctx.config.mode, &ctx.config.hrp).ok()?;
 
                 ctx.shared
                     .checked
@@ -188,7 +212,7 @@ where
     });
 
     ctx.shared.should_stop.store(true, Ordering::Relaxed);
-    let _ = reporter.join();
+    join_progress_reporter(reporter);
 
     let hit = match outcome {
         Some(FastSearchOutcome::Hit(hit)) => Some(hit),
@@ -198,6 +222,7 @@ where
     Ok(hit)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_lowest_search<F>(ctx: LowestSearchContext<F>) -> Option<Hit>
 where
     F: Fn(SearchProgress) + Send + Sync + 'static,
@@ -206,26 +231,24 @@ where
     let (result_tx, result_rx) = mpsc::channel::<ChunkResult>();
 
     let job_rx = Arc::new(Mutex::new(job_rx));
-    let started = Instant::now();
 
-    let reporter = spawn_progress_reporter(
+    let reporter = start_progress_reporter(
         Arc::clone(&ctx.shared.checked),
         Arc::clone(&ctx.shared.should_stop),
-        started,
         Arc::clone(&ctx.progress),
     );
 
     for _ in 0..ctx.worker_count.max(1) {
         let job_rx = Arc::clone(&job_rx);
         let result_tx = result_tx.clone();
-        let master_sk = Arc::clone(&ctx.master_sk);
         let checked = Arc::clone(&ctx.shared.checked);
         let should_stop = Arc::clone(&ctx.shared.should_stop);
         let wanted_prefix = ctx.config.wanted_prefix.clone();
         let hrp = ctx.config.hrp.clone();
         let mode = ctx.config.mode;
+        let generator = Arc::clone(&ctx.config.generator);
 
-        thread::spawn(move || {
+        std::thread::spawn(move || {
             let shared = SearchShared {
                 checked,
                 should_stop,
@@ -235,6 +258,7 @@ where
                 wanted_prefix,
                 hrp,
                 mode,
+                generator,
             };
 
             loop {
@@ -252,7 +276,7 @@ where
                     Err(_) => break,
                 };
 
-                let result = process_chunk(&master_sk, start, end, &config, &shared);
+                let result = process_chunk(start, end, &config, &shared);
 
                 if result_tx.send(result).is_err() {
                     break;
@@ -273,7 +297,7 @@ where
     loop {
         if ctx.shared.should_stop.load(Ordering::Relaxed) {
             ctx.shared.should_stop.store(true, Ordering::Relaxed);
-            let _ = reporter.join();
+            join_progress_reporter(reporter);
             return best_candidate;
         }
 
@@ -318,7 +342,7 @@ where
         if let Some(candidate) = &best_candidate {
             if completed_until > candidate.index as u64 {
                 ctx.shared.should_stop.store(true, Ordering::Relaxed);
-                let _ = reporter.join();
+                join_progress_reporter(reporter);
                 return best_candidate;
             }
         }
@@ -339,17 +363,19 @@ where
     }
 
     ctx.shared.should_stop.store(true, Ordering::Relaxed);
-    let _ = reporter.join();
+    join_progress_reporter(reporter);
     None
 }
 
-pub fn run_search<F>(
+pub fn run_search_with_generator<F, G>(
     request: SearchRequest,
     should_stop: Arc<AtomicBool>,
     progress: F,
+    generator: G,
 ) -> Result<SearchResult>
 where
     F: Fn(SearchProgress) + Send + Sync + 'static,
+    G: Fn(u32, Mode, &str) -> Result<Vec<Hit>> + Send + Sync + 'static,
 {
     let wanted_prefix = request.wanted_prefix.to_lowercase();
 
@@ -364,7 +390,6 @@ where
     };
 
     let worker_count = request.worker_count.max(1);
-    let master_sk = Arc::new(master_sk_from_mnemonic(&request.mnemonic)?);
     let progress = Arc::new(progress);
 
     let shared = SearchShared {
@@ -376,12 +401,12 @@ where
         wanted_prefix,
         hrp,
         mode: request.mode,
+        generator: Arc::new(generator),
     };
 
     let hit = match request.search_mode {
         SearchMode::Fast => {
             let ctx = FastSearchContext {
-                master_sk,
                 shared,
                 config,
                 start_index: request.start_index,
@@ -392,17 +417,24 @@ where
             run_fast_search(ctx)?
         }
         SearchMode::Lowest => {
-            let ctx = LowestSearchContext {
-                master_sk,
-                shared,
-                config,
-                start_index: request.start_index,
-                chunk_size: request.chunk_size,
-                worker_count,
-                progress,
-            };
+            #[cfg(target_arch = "wasm32")]
+            {
+                bail!("lowest search mode is not implemented for wasm yet");
+            }
 
-            run_lowest_search(ctx)
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let ctx = LowestSearchContext {
+                    shared,
+                    config,
+                    start_index: request.start_index,
+                    chunk_size: request.chunk_size,
+                    worker_count,
+                    progress,
+                };
+
+                run_lowest_search(ctx)
+            }
         }
     };
 
