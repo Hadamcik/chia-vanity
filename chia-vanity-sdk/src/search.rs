@@ -139,6 +139,11 @@ where
     })
 }
 
+enum FastSearchOutcome {
+    Hit(Hit),
+    Stopped,
+}
+
 fn run_fast_search<F>(ctx: FastSearchContext<F>) -> Result<Option<Hit>>
 where
     F: Fn(SearchProgress) + Send + Sync + 'static,
@@ -156,12 +161,12 @@ where
         .build()
         .context("failed to build rayon thread pool")?;
 
-    let hit = pool.install(|| {
+    let outcome = pool.install(|| {
         (ctx.start_index..=(u32::MAX as u64))
             .into_par_iter()
             .find_map_any(|i| {
                 if ctx.shared.should_stop.load(Ordering::Relaxed) {
-                    return None;
+                    return Some(FastSearchOutcome::Stopped);
                 }
 
                 let index = u32::try_from(i).ok()?;
@@ -175,12 +180,20 @@ where
 
                 candidates
                     .into_iter()
-                    .find(|candidate| address_matches(&candidate.address, &ctx.config.wanted_prefix))
+                    .find(|candidate| {
+                        address_matches(&candidate.address, &ctx.config.wanted_prefix)
+                    })
+                    .map(FastSearchOutcome::Hit)
             })
     });
 
     ctx.shared.should_stop.store(true, Ordering::Relaxed);
     let _ = reporter.join();
+
+    let hit = match outcome {
+        Some(FastSearchOutcome::Hit(hit)) => Some(hit),
+        Some(FastSearchOutcome::Stopped) | None => None,
+    };
 
     Ok(hit)
 }
