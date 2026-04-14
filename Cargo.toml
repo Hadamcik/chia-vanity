@@ -1,5 +1,5 @@
 [package]
-name = "chia-vanity-sdk"
+name = "chia-vanity"
 version = "0.1.0"
 edition = "2021"
 

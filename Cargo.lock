@@ -622,7 +622,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "chia-vanity-sdk"
+name = "chia-vanity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
