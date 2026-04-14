@@ -1,1 +1,5 @@
-export { browserWorkerRuntime as tauriRuntime } from './browserWorkerRuntime';
+import { browserWorkerRuntime } from './browserWorkerRuntime';
+
+export const tauriRuntime = {
+    ...browserWorkerRuntime,
+};

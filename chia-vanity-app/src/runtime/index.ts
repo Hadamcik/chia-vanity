@@ -1,4 +1,14 @@
 import { browserWorkerRuntime } from './browserWorkerRuntime';
-import type { VanityRuntime } from './types';
+import { sageRuntime } from './sageRuntime';
+import { tauriRuntime } from './tauriRuntime';
+import { isInsideSage } from './sageHost';
 
-export const runtime: VanityRuntime = browserWorkerRuntime;
+function isInsideTauri(): boolean {
+    return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+export const runtime = isInsideSage()
+    ? sageRuntime
+    : isInsideTauri()
+        ? tauriRuntime
+        : browserWorkerRuntime;

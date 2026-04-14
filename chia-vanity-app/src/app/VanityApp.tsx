@@ -22,6 +22,10 @@ interface StartSearchRequest {
 }
 
 export default function VanityApp() {
+    const [hostInfo, setHostInfo] = useState<null | {
+        permissions: { network: boolean; persistent_storage: boolean };
+        storage: { bytesUsed: number; quotaBytes: number | null };
+    }>(null);
     const [mnemonic, setMnemonic] = useState('');
     const [wantedPrefix, setWantedPrefix] = useState('xch1ace');
     const [startIndex, setStartIndex] = useState(0);
@@ -37,6 +41,24 @@ export default function VanityApp() {
     const [hit, setHit] = useState<SearchHitPayload | null>(null);
     const [error, setError] = useState('');
     const [status, setStatus] = useState('Idle');
+
+    useEffect(() => {
+        const maybeLoadHostInfo = async () => {
+            const candidate = runtime as {
+                getHostCapabilities?: () => Promise<null | {
+                    permissions: { network: boolean; persistent_storage: boolean };
+                    storage: { bytesUsed: number; quotaBytes: number | null };
+                }>;
+            };
+
+            if (typeof candidate.getHostCapabilities === 'function') {
+                const info = await candidate.getHostCapabilities();
+                setHostInfo(info);
+            }
+        };
+
+        void maybeLoadHostInfo();
+    }, []);
 
     useEffect(() => {
         let unlistenProgress: (() => void) | undefined;
@@ -148,6 +170,33 @@ export default function VanityApp() {
 
     return (
         <main style={styles.page}>
+            {hostInfo ? (
+                <section style={styles.card}>
+                    <h2 style={styles.sectionTitle}>Sage host</h2>
+                    <div style={styles.statsGrid}>
+                        <Stat
+                            label="Network"
+                            value={hostInfo.permissions.network ? 'allowed' : 'blocked'}
+                        />
+                        <Stat
+                            label="Persistent storage"
+                            value={hostInfo.permissions.persistent_storage ? 'allowed' : 'blocked'}
+                        />
+                        <Stat
+                            label="Storage used"
+                            value={`${hostInfo.storage.bytesUsed.toLocaleString()} bytes`}
+                        />
+                        <Stat
+                            label="Quota"
+                            value={
+                                hostInfo.storage.quotaBytes === null
+                                    ? 'default'
+                                    : `${hostInfo.storage.quotaBytes.toLocaleString()} bytes`
+                            }
+                        />
+                    </div>
+                </section>
+            ) : null}
             <div style={styles.container}>
                 <h1 style={styles.title}>Chia Vanity Address Generator</h1>
                 <p style={styles.subtitle}>
