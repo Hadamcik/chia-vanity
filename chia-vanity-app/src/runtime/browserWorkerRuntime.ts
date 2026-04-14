@@ -31,6 +31,7 @@ let totalChecked = 0;
 let workers: Worker[] = [];
 let pendingWorkers = 0;
 let bestHit: SearchCompletedPayload['hit'] = null;
+let cancelView: Int32Array | null = null;
 
 function emit<K extends keyof EventPayloads>(
     kind: K,
@@ -61,18 +62,29 @@ function resetRunState() {
     startedAt = performance.now();
     pendingWorkers = 0;
     bestHit = null;
+    cancelView = null;
 }
 
-function finish(payload: SearchCompletedPayload) {
-    running = false;
-
+function cleanupWorkers() {
     for (const worker of workers) {
         worker.terminate();
     }
     workers = [];
+    cancelView = null;
+}
 
+function finish(payload: SearchCompletedPayload) {
+    running = false;
+    cleanupWorkers();
     emit('state', { running: false });
     emit('completed', payload);
+}
+
+function fail(message: string) {
+    running = false;
+    cleanupWorkers();
+    emit('state', { running: false });
+    emit('failed', { message });
 }
 
 function isBetterHit(
@@ -109,6 +121,12 @@ export const browserWorkerRuntime: VanityRuntime = {
                 ? req.workerCount
                 : Math.max(1, navigator.hardwareConcurrency || 1);
 
+        if (typeof SharedArrayBuffer !== 'undefined') {
+            const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+            cancelView = new Int32Array(buffer);
+            Atomics.store(cancelView, 0, 0);
+        }
+
         pendingWorkers = workerCount;
 
         for (let workerId = 0; workerId < workerCount; workerId += 1) {
@@ -142,8 +160,8 @@ export const browserWorkerRuntime: VanityRuntime = {
                         bestHit = hit;
                     }
 
-                    for (const w of workers) {
-                        w.postMessage({ type: 'stop' });
+                    if (cancelView) {
+                        Atomics.store(cancelView, 0, 1);
                     }
 
                     if (req.searchMode === 'fast') {
@@ -171,30 +189,12 @@ export const browserWorkerRuntime: VanityRuntime = {
                 }
 
                 if (msg.type === 'error') {
-                    running = false;
-
-                    for (const w of workers) {
-                        w.terminate();
-                    }
-                    workers = [];
-
-                    emit('state', { running: false });
-                    emit('failed', { message: msg.payload.message });
+                    fail(msg.payload.message);
                 }
             };
 
             worker.onerror = (event) => {
-                running = false;
-
-                for (const w of workers) {
-                    w.terminate();
-                }
-                workers = [];
-
-                emit('state', { running: false });
-                emit('failed', {
-                    message: event.message || 'worker failed',
-                });
+                fail(event.message || 'worker failed');
             };
 
             workers.push(worker);
@@ -209,6 +209,7 @@ export const browserWorkerRuntime: VanityRuntime = {
                     mode: req.mode,
                     searchMode: req.searchMode,
                     reportEvery: 1000,
+                    cancelBuffer: cancelView?.buffer ?? null,
                 },
             });
         }
@@ -219,9 +220,13 @@ export const browserWorkerRuntime: VanityRuntime = {
             return;
         }
 
-        for (const worker of workers) {
-            worker.postMessage({ type: 'stop' });
+        if (cancelView) {
+            Atomics.store(cancelView, 0, 1);
+            return;
         }
+
+        // Fallback for environments without SharedArrayBuffer.
+        finish({ hit: bestHit });
     },
 
     async getSearchState() {

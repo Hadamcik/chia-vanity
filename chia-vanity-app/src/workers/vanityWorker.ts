@@ -23,6 +23,7 @@ interface StartPayload {
     mode: Mode;
     searchMode: SearchMode;
     reportEvery: number;
+    cancelBuffer: SharedArrayBuffer | null;
 }
 
 type WorkerMessage =
@@ -49,7 +50,9 @@ let shouldStop = false;
 async function ensureInit() {
     if (!initialized) {
         const mod = chiaWalletSdk as {
-            default?: (input?: RequestInfo | URL | Response | BufferSource | WebAssembly.Module) => Promise<unknown>;
+            default?: (
+                input?: RequestInfo | URL | Response | BufferSource | WebAssembly.Module
+            ) => Promise<unknown>;
             initSync?: (input?: BufferSource | WebAssembly.Module) => unknown;
         };
 
@@ -131,6 +134,10 @@ function isBetterHit(
 async function runSearch(payload: StartPayload) {
     await ensureInit();
 
+    const cancelView = payload.cancelBuffer
+        ? new Int32Array(payload.cancelBuffer)
+        : null;
+
     let checkedSinceLastReport = 0;
     let lastReportAt = performance.now();
 
@@ -155,31 +162,31 @@ async function runSearch(payload: StartPayload) {
         }
     }
 
-    const prefix = payload.wantedPrefix.toLowerCase().startsWith('txch1')
-        ? 'txch'
-        : 'xch';
+    const wantedPrefixLower = payload.wantedPrefix.toLowerCase();
+    const prefix = wantedPrefixLower.startsWith('txch1') ? 'txch' : 'xch';
 
     const mnemonic = new Mnemonic(payload.mnemonic);
     const seed = mnemonic.toSeed('');
     const masterSk = SecretKey.fromSeed(seed);
     const walletRoot = deriveWalletRoot(masterSk);
 
-    let checked = 0;
     let bestHit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null = null;
 
     for (let index = payload.startIndex; index <= 0xffffffff; index += payload.step) {
-        if (shouldStop) {
+        if (
+            shouldStop ||
+            (cancelView !== null && Atomics.load(cancelView, 0) === 1)
+        ) {
             flushProgress(true);
             postMessage({ type: 'stopped' } satisfies WorkerResponse);
             return;
         }
 
         const candidates = deriveCandidatesForIndex(walletRoot, index, payload.mode, prefix);
-        checked += candidates.length;
         checkedSinceLastReport += candidates.length;
 
         for (const candidate of candidates) {
-            if (!candidate.address.toLowerCase().startsWith(payload.wantedPrefix.toLowerCase())) {
+            if (!candidate.address.toLowerCase().startsWith(wantedPrefixLower)) {
                 continue;
             }
 
