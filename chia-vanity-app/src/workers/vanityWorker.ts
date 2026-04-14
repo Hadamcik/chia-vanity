@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
-import * as chiaWalletSdk from "chia-wallet-sdk-wasm/chia_wallet_sdk_wasm.js";
+
+import * as chiaWalletSdk from 'chia-wallet-sdk-wasm/chia_wallet_sdk_wasm.js';
+import chiaWalletSdkWasmUrl from 'chia-wallet-sdk-wasm/chia_wallet_sdk_wasm_bg.wasm?url';
 
 const {
     Address,
@@ -46,11 +48,13 @@ let shouldStop = false;
 
 async function ensureInit() {
     if (!initialized) {
-        const maybeInit =
-            (chiaWalletSdk as { default?: () => Promise<unknown> }).default;
+        const mod = chiaWalletSdk as {
+            default?: (input?: RequestInfo | URL | Response | BufferSource | WebAssembly.Module) => Promise<unknown>;
+            initSync?: (input?: BufferSource | WebAssembly.Module) => unknown;
+        };
 
-        if (typeof maybeInit === "function") {
-            await maybeInit();
+        if (typeof mod.default === 'function') {
+            await mod.default(chiaWalletSdkWasmUrl);
         }
 
         initialized = true;
@@ -127,6 +131,30 @@ function isBetterHit(
 async function runSearch(payload: StartPayload) {
     await ensureInit();
 
+    let checkedSinceLastReport = 0;
+    let lastReportAt = performance.now();
+
+    function flushProgress(force = false) {
+        const now = performance.now();
+
+        if (
+            checkedSinceLastReport > 0 &&
+            (
+                force ||
+                checkedSinceLastReport >= payload.reportEvery ||
+                now - lastReportAt >= 200
+            )
+        ) {
+            postMessage({
+                type: 'progress',
+                payload: { checked: checkedSinceLastReport },
+            } satisfies WorkerResponse);
+
+            checkedSinceLastReport = 0;
+            lastReportAt = now;
+        }
+    }
+
     const prefix = payload.wantedPrefix.toLowerCase().startsWith('txch1')
         ? 'txch'
         : 'xch';
@@ -141,12 +169,14 @@ async function runSearch(payload: StartPayload) {
 
     for (let index = payload.startIndex; index <= 0xffffffff; index += payload.step) {
         if (shouldStop) {
+            flushProgress(true);
             postMessage({ type: 'stopped' } satisfies WorkerResponse);
             return;
         }
 
         const candidates = deriveCandidatesForIndex(walletRoot, index, payload.mode, prefix);
         checked += candidates.length;
+        checkedSinceLastReport += candidates.length;
 
         for (const candidate of candidates) {
             if (!candidate.address.toLowerCase().startsWith(payload.wantedPrefix.toLowerCase())) {
@@ -154,6 +184,7 @@ async function runSearch(payload: StartPayload) {
             }
 
             if (payload.searchMode === 'fast') {
+                flushProgress(true);
                 postMessage({ type: 'hit', payload: candidate } satisfies WorkerResponse);
                 return;
             }
@@ -163,20 +194,16 @@ async function runSearch(payload: StartPayload) {
             }
         }
 
-        if (checked >= payload.reportEvery) {
-            postMessage({
-                type: 'progress',
-                payload: { checked },
-            } satisfies WorkerResponse);
-            checked = 0;
-        }
+        flushProgress();
 
         if (payload.searchMode === 'lowest' && bestHit) {
+            flushProgress(true);
             postMessage({ type: 'hit', payload: bestHit } satisfies WorkerResponse);
             return;
         }
     }
 
+    flushProgress(true);
     postMessage({ type: 'done' } satisfies WorkerResponse);
 }
 
