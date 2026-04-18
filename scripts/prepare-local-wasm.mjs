@@ -6,9 +6,8 @@ import { execSync } from 'node:child_process';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const appRoot = path.resolve(__dirname, '..');
-const repoRoot = path.resolve(appRoot, '..');
 
-const walletSdkRoot = path.join(repoRoot, 'external', 'chia-wallet-sdk', 'wasm');
+const walletSdkRoot = path.join(appRoot, 'external', 'chia-wallet-sdk', 'wasm');
 const walletSdkPkg = path.join(walletSdkRoot, 'pkg');
 
 const vendorPkgRoot = path.join(appRoot, 'vendor-pkg');

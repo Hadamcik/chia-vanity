@@ -5,7 +5,7 @@ import type {
     SearchStatePayload,
     StartSearchRequest,
     VanityRuntime,
-} from './types';
+} from './types.ts';
 
 type EventPayloads = {
     progress: SearchProgressPayload;

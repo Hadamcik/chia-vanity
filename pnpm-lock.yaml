@@ -8,15 +8,15 @@ importers:
 
   .:
     dependencies:
+      '@sage-app/sdk':
+        specifier: file:../sage-app-sdk
+        version: file:../sage-app-sdk
       '@tauri-apps/api':
         specifier: ^2
         version: 2.10.1
       '@tauri-apps/plugin-opener':
         specifier: ^2
         version: 2.5.3
-      chia-vanity-wasm:
-        specifier: file:./vendor-pkg/chia-vanity-wasm
-        version: file:vendor-pkg/chia-vanity-wasm
       chia-wallet-sdk-wasm:
         specifier: file:./vendor-pkg/chia-wallet-sdk-wasm
         version: file:vendor-pkg/chia-wallet-sdk-wasm
@@ -431,6 +431,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@sage-app/sdk@file:../sage-app-sdk':
+    resolution: {directory: ../sage-app-sdk, type: directory}
+    hasBin: true
+
   '@tauri-apps/api@2.10.1':
     resolution: {integrity: sha512-hKL/jWf293UDSUN09rR69hrToyIXBb8CjGaWC7gfinvnQrBVvnLr08FeFi38gxtugAVyVcTa5/FD/Xnkb1siBw==}
 
@@ -549,9 +553,6 @@ packages:
 
   caniuse-lite@1.0.30001788:
     resolution: {integrity: sha512-6q8HFp+lOQtcf7wBK+uEenxymVWkGKkjFpCvw5W25cmMwEDU45p1xQFBQv8JDlMMry7eNxyBaR+qxgmTUZkIRQ==}
-
-  chia-vanity-wasm@file:vendor-pkg/chia-vanity-wasm:
-    resolution: {directory: vendor-pkg/chia-vanity-wasm, type: directory}
 
   chia-wallet-sdk-wasm@file:vendor-pkg/chia-wallet-sdk-wasm:
     resolution: {directory: vendor-pkg/chia-wallet-sdk-wasm, type: directory}
@@ -1014,6 +1015,8 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
 
+  '@sage-app/sdk@file:../sage-app-sdk': {}
+
   '@tauri-apps/api@2.10.1': {}
 
   '@tauri-apps/cli-darwin-arm64@2.10.1':
@@ -1121,8 +1124,6 @@ snapshots:
       update-browserslist-db: 1.2.3(browserslist@4.28.2)
 
   caniuse-lite@1.0.30001788: {}
-
-  chia-vanity-wasm@file:vendor-pkg/chia-vanity-wasm: {}
 
   chia-wallet-sdk-wasm@file:vendor-pkg/chia-wallet-sdk-wasm: {}
 

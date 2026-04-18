@@ -4,16 +4,16 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "prepare:wasm-local": "node ./scripts/prepare-local-wasm.mjs",
+    "prepare:wasm-local": "node scripts/prepare-local-wasm.mjs",
     "dev": "pnpm prepare:wasm-local && vite",
-    "build": "pnpm prepare:wasm-local && tsc && vite build",
-    "build:sage-package": "pnpm build && node ./scripts/build-sage-package.mjs",
-    "build:sage-zip": "pnpm build:sage-package && node ./scripts/zip-sage-package.mjs",
-    "tauri": "pnpm prepare:wasm-local && tauri"
+    "sage:finalize": "sage-app finalize-manifest --source sage-manifest.json --dist ./dist",
+    "build": "pnpm prepare:wasm-local && tsc && vite build && pnpm sage:finalize",
+    "tauri:dev": "pnpm prepare:wasm-local && tsc && vite build && tauri dev"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "@sage-app/sdk": "file:../sage-app-sdk",
     "chia-wallet-sdk-wasm": "file:./vendor-pkg/chia-wallet-sdk-wasm",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

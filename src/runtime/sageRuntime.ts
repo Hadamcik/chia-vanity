@@ -1,5 +1,5 @@
-import { browserWorkerRuntime } from './browserWorkerRuntime';
-import { getSageHost } from './sageHost';
+import { browserWorkerRuntime } from './browserWorkerRuntime.ts';
+import { getSageHost } from './sageHost.ts';
 
 export const sageRuntime = {
     ...browserWorkerRuntime,

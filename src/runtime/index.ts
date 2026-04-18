@@ -1,7 +1,7 @@
-import { browserWorkerRuntime } from './browserWorkerRuntime';
-import { sageRuntime } from './sageRuntime';
-import { tauriRuntime } from './tauriRuntime';
-import { isInsideSage } from './sageHost';
+import { browserWorkerRuntime } from './browserWorkerRuntime.ts';
+import { sageRuntime } from './sageRuntime.ts';
+import { tauriRuntime } from './tauriRuntime.ts';
+import { isInsideSage } from './sageHost.ts';
 
 function isInsideTauri(): boolean {
     return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
