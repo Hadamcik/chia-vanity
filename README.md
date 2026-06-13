@@ -1,11 +1,12 @@
-# Chia Vanity Address Brute Forcer (Rust)
+# Chia Vanity Address Brute Forcer
 
-A high-performance, multi-core brute forcer for generating Chia wallet receive addresses with a desired prefix (vanity address).
+A high-performance, multi-core brute forcer for generating Chia wallet receive addresses with a desired prefix, suffix, or both.
 
-This tool derives real wallet addresses from your mnemonic and searches for ones matching a prefix like:
+This tool derives real wallet addresses from your mnemonic and searches for ones matching patterns like:
 
 ```
 xch1name...
+...ace
 ```
 
 ---
@@ -21,6 +22,7 @@ xch1name...
 ## 🚀 What it does
 
 - Derives wallet addresses from your mnemonic (`m/12381/8444/2/i`)
+- Matches prefix, suffix, or both at the same time
 - Supports:
   - hardened
   - unhardened
@@ -60,28 +62,53 @@ cargo build --release
 
 ## ▶️ Usage
 
+The root workspace defaults to the native Rust CLI, so this does not start Tauri or use WASM:
+
 ```bash
 cargo run --release -- \
-  "<your 24 word mnemonic>" \
-  <wanted_prefix> \
-  [start_index] \
-  [chunk_size] \
-  [mode] \
-  [threads] \
-  [search_mode]
+  "<your mnemonic>" \
+  --prefix xch1name \
+  --suffix ace
 ```
 
-### Example
+At least one of `--prefix` or `--suffix` is required. When both are supplied, the address must match both.
+
+### Prefix only
 
 ```bash
 cargo run --release -- \
   "word1 word2 ... word24" \
-  xch1name \
-  0 \
-  10000 \
-  unhardened \
-  0 \
-  fast
+  --prefix xch1name
+```
+
+### Suffix only
+
+```bash
+cargo run --release -- \
+  "word1 word2 ... word24" \
+  --suffix ace
+```
+
+Suffix-only searches encode `xch` addresses by default. Use `--address-prefix txch` for testnet addresses.
+
+### Prefix and suffix
+
+```bash
+cargo run --release -- \
+  "word1 word2 ... word24" \
+  --prefix xch1name \
+  --suffix ace
+```
+
+### Useful options
+
+```bash
+--mode hardened|unhardened|both
+--search-mode fast|lowest
+--threads 0
+--start-index 0
+--chunk-size 10000
+--address-prefix xch|txch
 ```
 
 ---
@@ -90,7 +117,7 @@ cargo run --release -- \
 
 ### ⚡ fast (default)
 
-- Uses Rayon parallel iteration over entire range
+- Uses worker threads over the address range
 - Returns first match found by any thread
 - **Fastest**
 - **Index can be very large and non-sequential**
@@ -143,6 +170,7 @@ Each extra character multiplies work by **32×**.
 
 - Bech32 encoding means prefixes are not perfectly uniform
 - Early characters may have slight bias
+- Prefix and suffix inputs are validated against the Bech32 character set
 - `fast` mode may return very high indices due to parallel splitting
 - `lowest` mode ensures minimal index
 
