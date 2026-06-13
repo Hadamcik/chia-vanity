@@ -8,22 +8,22 @@
     "dev": "pnpm prepare:wasm-local && vite",
     "sage:finalize": "sage-app finalize-manifest --source sage-manifest.json --dist ./dist",
     "build": "pnpm prepare:wasm-local && tsc && vite build && pnpm sage:finalize",
-    "tauri:dev": "pnpm prepare:wasm-local && tsc && vite build && tauri dev"
+    "tauri:dev": "pnpm build && tauri dev"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2",
-    "@sage-app/sdk": "file:../sage-app-sdk",
-    "chia-wallet-sdk-wasm": "file:./vendor-pkg/chia-wallet-sdk-wasm",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "@sage-app/sdk": "file:../sage/packages/sage-app-sdk",
+    "@tauri-apps/api": "^2.10.3",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "chia-wallet-sdk-wasm": "file:vendor-pkg/chia-wallet-sdk-wasm",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
+    "@tauri-apps/cli": "^2.10.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.3.2"
   }
 }

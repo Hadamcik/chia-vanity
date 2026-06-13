@@ -1,4 +1,20 @@
 {
+  "manifestVersion": 0,
+  "sageVersion": {
+    "min": "1.0.0"
+  },
   "name": "Chia Vanity",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "permissions": {
+    "network": {
+      "whitelist": {
+        "required": [],
+        "optional": []
+      }
+    },
+    "capabilities": {
+      "required": [],
+      "optional": ["wallet.get_secret_key"]
+    }
+  }
 }

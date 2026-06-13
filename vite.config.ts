@@ -16,13 +16,6 @@ function sageManifestPlugin() {
         res.end(json);
       });
     },
-
-    closeBundle() {
-      const outDir = path.resolve(__dirname, 'dist');
-      const target = path.join(outDir, 'sage-manifest.json');
-      const json = fs.readFileSync(manifestPath, 'utf8');
-      fs.writeFileSync(target, json);
-    },
   };
 }
 
