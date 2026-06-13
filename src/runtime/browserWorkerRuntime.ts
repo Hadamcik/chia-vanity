@@ -112,6 +112,10 @@ export const browserWorkerRuntime: VanityRuntime = {
             throw new Error('search is already running');
         }
 
+        if (req.wantedPrefix.trim().length === 0 && req.wantedSuffix.trim().length === 0) {
+            throw new Error('prefix or suffix is required');
+        }
+
         running = true;
         resetRunState();
         emit('state', { running: true });
@@ -204,6 +208,7 @@ export const browserWorkerRuntime: VanityRuntime = {
                 payload: {
                     mnemonic: req.mnemonic,
                     wantedPrefix: req.wantedPrefix,
+                    wantedSuffix: req.wantedSuffix,
                     startIndex: req.startIndex + workerId,
                     step: workerCount,
                     mode: req.mode,

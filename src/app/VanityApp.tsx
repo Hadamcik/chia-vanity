@@ -14,6 +14,7 @@ interface SearchHitPayload {
 interface StartSearchRequest {
     mnemonic: string;
     wantedPrefix: string;
+    wantedSuffix: string;
     startIndex: number;
     chunkSize: number;
     mode: Mode;
@@ -29,6 +30,7 @@ export default function VanityApp() {
 
     const [mnemonic, setMnemonic] = useState('');
     const [wantedPrefix, setWantedPrefix] = useState('xch1ace');
+    const [wantedSuffix, setWantedSuffix] = useState('');
     const [startIndex, setStartIndex] = useState(0);
     const [chunkSize, setChunkSize] = useState(10000);
     const [mode, setMode] = useState<Mode>('unhardened');
@@ -113,8 +115,11 @@ export default function VanityApp() {
     const inputsDisabled = uiState !== 'idle';
 
     const canStart = useMemo(() => {
-        return mnemonic.trim().length > 0 && wantedPrefix.trim().length > 0 && uiState === 'idle';
-    }, [mnemonic, wantedPrefix, uiState]);
+        const hasWantedPattern =
+            wantedPrefix.trim().length > 0 || wantedSuffix.trim().length > 0;
+
+        return mnemonic.trim().length > 0 && hasWantedPattern && uiState === 'idle';
+    }, [mnemonic, wantedPrefix, wantedSuffix, uiState]);
 
     const canStop = uiState === 'running';
 
@@ -130,6 +135,7 @@ export default function VanityApp() {
         const req: StartSearchRequest = {
             mnemonic: mnemonic.trim(),
             wantedPrefix: wantedPrefix.trim(),
+            wantedSuffix: wantedSuffix.trim(),
             startIndex,
             chunkSize,
             mode,
@@ -167,7 +173,7 @@ export default function VanityApp() {
                     <div>
                         <h1 style={styles.title}>Chia Vanity</h1>
                         <p style={styles.subtitle}>
-                            Brute-force receive address prefixes by derivation index.
+                            Brute-force receive address prefixes and suffixes by derivation index.
                         </p>
                     </div>
 
@@ -233,6 +239,17 @@ export default function VanityApp() {
                                     value={wantedPrefix}
                                     onChange={(e) => setWantedPrefix(e.target.value)}
                                     placeholder="xch1ace"
+                                    disabled={inputsDisabled}
+                                />
+                            </label>
+
+                            <label style={styles.label}>
+                                <span style={styles.labelText}>Wanted suffix</span>
+                                <input
+                                    style={styles.input}
+                                    value={wantedSuffix}
+                                    onChange={(e) => setWantedSuffix(e.target.value)}
+                                    placeholder="ace"
                                     disabled={inputsDisabled}
                                 />
                             </label>

@@ -29,6 +29,7 @@ export interface SearchStatePayload {
 export interface StartSearchRequest {
     mnemonic: string;
     wantedPrefix: string;
+    wantedSuffix: string;
     startIndex: number;
     chunkSize: number;
     mode: Mode;

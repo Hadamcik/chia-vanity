@@ -18,6 +18,7 @@ type SearchMode = 'fast' | 'lowest';
 interface StartPayload {
     mnemonic: string;
     wantedPrefix: string;
+    wantedSuffix: string;
     startIndex: number;
     step: number;
     mode: Mode;
@@ -131,6 +132,30 @@ function isBetterHit(
     return nextHit.mode === 'unhardened' && currentHit.mode === 'hardened';
 }
 
+function matchesWantedAddress(
+    address: string,
+    wantedPrefixLower: string,
+    wantedSuffixLower: string,
+): boolean {
+    const addressLower = address.toLowerCase();
+
+    if (
+        wantedPrefixLower.length > 0 &&
+        !addressLower.startsWith(wantedPrefixLower)
+    ) {
+        return false;
+    }
+
+    if (
+        wantedSuffixLower.length > 0 &&
+        !addressLower.endsWith(wantedSuffixLower)
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
 async function runSearch(payload: StartPayload) {
     await ensureInit();
 
@@ -163,6 +188,7 @@ async function runSearch(payload: StartPayload) {
     }
 
     const wantedPrefixLower = payload.wantedPrefix.toLowerCase();
+    const wantedSuffixLower = payload.wantedSuffix.toLowerCase();
     const prefix = wantedPrefixLower.startsWith('txch1') ? 'txch' : 'xch';
 
     const mnemonic = new Mnemonic(payload.mnemonic);
@@ -186,7 +212,7 @@ async function runSearch(payload: StartPayload) {
         checkedSinceLastReport += candidates.length;
 
         for (const candidate of candidates) {
-            if (!candidate.address.toLowerCase().startsWith(wantedPrefixLower)) {
+            if (!matchesWantedAddress(candidate.address, wantedPrefixLower, wantedSuffixLower)) {
                 continue;
             }
 
