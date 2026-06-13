@@ -1,5 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { runtime } from '../runtime';
+import {
+    validateWantedPatterns,
+    validateWantedPrefix,
+    validateWantedSuffix,
+} from '../lib/vanityValidation';
 
 type Mode = 'hardened' | 'unhardened' | 'both';
 type SearchMode = 'fast' | 'lowest';
@@ -113,17 +118,32 @@ export default function VanityApp() {
     }, []);
 
     const inputsDisabled = uiState !== 'idle';
+    const prefixValidationError = validateWantedPrefix(wantedPrefix);
+    const suffixValidationError = validateWantedSuffix(wantedSuffix);
+    const patternValidationError = validateWantedPatterns(wantedPrefix, wantedSuffix);
 
     const canStart = useMemo(() => {
         const hasWantedPattern =
             wantedPrefix.trim().length > 0 || wantedSuffix.trim().length > 0;
 
-        return mnemonic.trim().length > 0 && hasWantedPattern && uiState === 'idle';
-    }, [mnemonic, wantedPrefix, wantedSuffix, uiState]);
+        return (
+            mnemonic.trim().length > 0 &&
+            hasWantedPattern &&
+            !prefixValidationError &&
+            !suffixValidationError &&
+            uiState === 'idle'
+        );
+    }, [mnemonic, prefixValidationError, suffixValidationError, wantedPrefix, wantedSuffix, uiState]);
 
     const canStop = uiState === 'running';
 
     async function handleStart() {
+        if (patternValidationError) {
+            setError(patternValidationError);
+            setStatus('Invalid input');
+            return;
+        }
+
         setError('');
         setHit(null);
         setChecked(0);
@@ -235,23 +255,37 @@ export default function VanityApp() {
                             <label style={styles.label}>
                                 <span style={styles.labelText}>Wanted prefix</span>
                                 <input
-                                    style={styles.input}
+                                    style={{
+                                        ...styles.input,
+                                        ...(prefixValidationError ? styles.invalidInput : null),
+                                    }}
                                     value={wantedPrefix}
                                     onChange={(e) => setWantedPrefix(e.target.value)}
                                     placeholder="xch1ace"
+                                    aria-invalid={Boolean(prefixValidationError)}
                                     disabled={inputsDisabled}
                                 />
+                                {prefixValidationError ? (
+                                    <span style={styles.fieldError}>{prefixValidationError}</span>
+                                ) : null}
                             </label>
 
                             <label style={styles.label}>
                                 <span style={styles.labelText}>Wanted suffix</span>
                                 <input
-                                    style={styles.input}
+                                    style={{
+                                        ...styles.input,
+                                        ...(suffixValidationError ? styles.invalidInput : null),
+                                    }}
                                     value={wantedSuffix}
                                     onChange={(e) => setWantedSuffix(e.target.value)}
                                     placeholder="ace"
+                                    aria-invalid={Boolean(suffixValidationError)}
                                     disabled={inputsDisabled}
                                 />
+                                {suffixValidationError ? (
+                                    <span style={styles.fieldError}>{suffixValidationError}</span>
+                                ) : null}
                             </label>
 
                             <label style={styles.label}>
@@ -531,6 +565,15 @@ const styles: Record<string, React.CSSProperties> = {
         boxSizing: 'border-box',
         outline: 'none',
         fontSize: 13,
+    },
+    invalidInput: {
+        borderColor: 'rgba(248, 113, 113, 0.75)',
+        boxShadow: '0 0 0 1px rgba(248, 113, 113, 0.18)',
+    },
+    fieldError: {
+        color: '#fca5a5',
+        fontSize: 12,
+        lineHeight: 1.35,
     },
     actions: {
         display: 'flex',

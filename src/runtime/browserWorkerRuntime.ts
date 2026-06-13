@@ -6,6 +6,7 @@ import type {
     StartSearchRequest,
     VanityRuntime,
 } from './types.ts';
+import { validateWantedPatterns } from '../lib/vanityValidation.ts';
 
 type EventPayloads = {
     progress: SearchProgressPayload;
@@ -112,8 +113,10 @@ export const browserWorkerRuntime: VanityRuntime = {
             throw new Error('search is already running');
         }
 
-        if (req.wantedPrefix.trim().length === 0 && req.wantedSuffix.trim().length === 0) {
-            throw new Error('prefix or suffix is required');
+        const validationError = validateWantedPatterns(req.wantedPrefix, req.wantedSuffix);
+
+        if (validationError) {
+            throw new Error(validationError);
         }
 
         running = true;
