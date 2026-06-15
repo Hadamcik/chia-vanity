@@ -184,6 +184,7 @@ Each extra character multiplies work by **32×**.
 
 - Bech32 encoding means prefixes are not perfectly uniform
 - Early characters may have slight bias
+- Default `unhardened` mode uses the same receive-address derivation style as Sage Wallet
 - Prefix and suffix inputs are validated against the Bech32 character set
 - `fast` mode may return very high indices due to parallel splitting
 - `lowest` mode ensures minimal index

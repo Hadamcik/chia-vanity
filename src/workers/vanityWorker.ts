@@ -11,6 +11,7 @@ const {
 } = chiaWalletSdk;
 
 type SecretKeyInstance = InstanceType<typeof chiaWalletSdk.SecretKey>;
+type PublicKeyInstance = ReturnType<SecretKeyInstance['publicKey']>;
 
 type Mode = 'hardened' | 'unhardened' | 'both';
 type SearchMode = 'fast' | 'lowest';
@@ -65,23 +66,43 @@ async function ensureInit() {
     }
 }
 
-function deriveWalletRoot(masterSk: SecretKeyInstance): SecretKeyInstance {
-    return masterSk.deriveHardenedPath([
-        CHIA_PURPOSE,
-        CHIA_COIN_TYPE,
-        CHIA_ACCOUNT,
-    ]);
-}
-
-function standardAddressForChildSk(childSk: SecretKeyInstance, prefix: string): string {
-    const syntheticPk = childSk.publicKey().deriveSynthetic();
+function standardAddressForPk(publicKey: PublicKeyInstance, prefix: string): string {
+    const syntheticPk = publicKey.deriveSynthetic();
     const puzzleHash = standardPuzzleHash(syntheticPk);
     const address = new Address(puzzleHash, prefix);
     return address.encode();
 }
 
+function standardAddressForSk(secretKey: SecretKeyInstance, prefix: string): string {
+    return standardAddressForPk(secretKey.publicKey(), prefix);
+}
+
+function deriveUnhardenedPkForIndex(
+    masterSk: SecretKeyInstance,
+    index: number,
+): PublicKeyInstance {
+    return masterSk.publicKey().deriveUnhardenedPath([
+        CHIA_PURPOSE,
+        CHIA_COIN_TYPE,
+        CHIA_ACCOUNT,
+        index,
+    ]);
+}
+
+function deriveHardenedSkForIndex(
+    masterSk: SecretKeyInstance,
+    index: number,
+): SecretKeyInstance {
+    return masterSk.deriveHardenedPath([
+        CHIA_PURPOSE,
+        CHIA_COIN_TYPE,
+        CHIA_ACCOUNT,
+        index,
+    ]);
+}
+
 function deriveCandidatesForIndex(
-    walletRoot: SecretKeyInstance,
+    masterSk: SecretKeyInstance,
     index: number,
     mode: Mode,
     prefix: string,
@@ -93,20 +114,20 @@ function deriveCandidatesForIndex(
     }> = [];
 
     if (mode === 'unhardened' || mode === 'both') {
-        const child = walletRoot.deriveUnhardened(index);
+        const publicKey = deriveUnhardenedPkForIndex(masterSk, index);
         out.push({
             index,
             mode: 'unhardened',
-            address: standardAddressForChildSk(child, prefix),
+            address: standardAddressForPk(publicKey, prefix),
         });
     }
 
     if (mode === 'hardened' || mode === 'both') {
-        const child = walletRoot.deriveHardened(index);
+        const secretKey = deriveHardenedSkForIndex(masterSk, index);
         out.push({
             index,
             mode: 'hardened',
-            address: standardAddressForChildSk(child, prefix),
+            address: standardAddressForSk(secretKey, prefix),
         });
     }
 
@@ -194,7 +215,6 @@ async function runSearch(payload: StartPayload) {
     const mnemonic = new Mnemonic(payload.mnemonic);
     const seed = mnemonic.toSeed('');
     const masterSk = SecretKey.fromSeed(seed);
-    const walletRoot = deriveWalletRoot(masterSk);
 
     let bestHit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null = null;
 
@@ -208,7 +228,7 @@ async function runSearch(payload: StartPayload) {
             return;
         }
 
-        const candidates = deriveCandidatesForIndex(walletRoot, index, payload.mode, prefix);
+        const candidates = deriveCandidatesForIndex(masterSk, index, payload.mode, prefix);
         checkedSinceLastReport += candidates.length;
 
         for (const candidate of candidates) {

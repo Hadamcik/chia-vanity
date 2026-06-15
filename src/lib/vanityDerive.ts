@@ -1,6 +1,7 @@
 import {
     Address,
     Mnemonic,
+    PublicKey,
     SecretKey,
     standardPuzzleHash,
 } from "chia-wallet-sdk-wasm";
@@ -11,29 +12,36 @@ const CHIA_PURPOSE = 12381;
 const CHIA_COIN_TYPE = 8444;
 const CHIA_ACCOUNT = 2;
 
-function deriveWalletRoot(masterSk: SecretKey): SecretKey {
+function standardAddressForPk(publicKey: PublicKey, prefix: string): string {
+    const syntheticPk = publicKey.deriveSynthetic();
+    const puzzleHash = standardPuzzleHash(syntheticPk);
+    const address = new Address(puzzleHash, prefix);
+    return address.encode();
+}
+
+function standardAddressForSk(secretKey: SecretKey, prefix: string): string {
+    return standardAddressForPk(secretKey.publicKey(), prefix);
+}
+
+function deriveUnhardenedPkForIndex(masterSk: SecretKey, index: number): PublicKey {
+    return masterSk.publicKey().deriveUnhardenedPath([
+        CHIA_PURPOSE,
+        CHIA_COIN_TYPE,
+        CHIA_ACCOUNT,
+        index,
+    ]);
+}
+
+function deriveHardenedSkForIndex(
+    masterSk: SecretKey,
+    index: number,
+): SecretKey {
     return masterSk.deriveHardenedPath([
         CHIA_PURPOSE,
         CHIA_COIN_TYPE,
         CHIA_ACCOUNT,
+        index,
     ]);
-}
-
-function deriveWalletChild(
-    walletRoot: SecretKey,
-    index: number,
-    mode: 'hardened' | 'unhardened',
-): SecretKey {
-    return mode === 'hardened'
-        ? walletRoot.deriveHardened(index)
-        : walletRoot.deriveUnhardened(index);
-}
-
-function standardAddressForChildSk(childSk: SecretKey, prefix: string): string {
-    const syntheticPk = childSk.publicKey().deriveSynthetic();
-    const puzzleHash = standardPuzzleHash(syntheticPk);
-    const address = new Address(puzzleHash, prefix);
-    return address.encode();
 }
 
 export function deriveCandidatesForIndex(
@@ -45,7 +53,6 @@ export function deriveCandidatesForIndex(
     const mnemonic = new Mnemonic(mnemonicPhrase);
     const seed = mnemonic.toSeed('');
     const masterSk = SecretKey.fromSeed(seed);
-    const walletRoot = deriveWalletRoot(masterSk);
 
     const out: Array<{
         index: number;
@@ -54,20 +61,20 @@ export function deriveCandidatesForIndex(
     }> = [];
 
     if (mode === 'unhardened' || mode === 'both') {
-        const child = deriveWalletChild(walletRoot, index, 'unhardened');
+        const publicKey = deriveUnhardenedPkForIndex(masterSk, index);
         out.push({
             index,
             mode: 'unhardened',
-            address: standardAddressForChildSk(child, prefix),
+            address: standardAddressForPk(publicKey, prefix),
         });
     }
 
     if (mode === 'hardened' || mode === 'both') {
-        const child = deriveWalletChild(walletRoot, index, 'hardened');
+        const secretKey = deriveHardenedSkForIndex(masterSk, index);
         out.push({
             index,
             mode: 'hardened',
-            address: standardAddressForChildSk(child, prefix),
+            address: standardAddressForSk(secretKey, prefix),
         });
     }
 

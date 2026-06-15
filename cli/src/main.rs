@@ -10,15 +10,12 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bip39::Mnemonic;
-use chia_bls::{DerivableKey, SecretKey};
+use chia_bls::{master_to_wallet_hardened, master_to_wallet_unhardened, SecretKey};
 use chia_puzzle_types::{standard::StandardArgs, DeriveSynthetic};
 use chia_sdk_types::Mod;
 use chia_sdk_utils::Address;
 use clap::{Parser, ValueEnum};
 
-const CHIA_PURPOSE: u32 = 12381;
-const CHIA_COIN_TYPE: u32 = 8444;
-const CHIA_ACCOUNT: u32 = 2;
 const BECH32_DATA_CHARS: &str = "023456789acdefghjklmnpqrstuvwxyz";
 const CHIA_ADDRESS_PREFIXES: [&str; 2] = ["xch1", "txch1"];
 
@@ -108,11 +105,11 @@ struct SearchConfig {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let wallet_root = Arc::new(wallet_root_from_mnemonic(&cli.mnemonic)?);
+    let master_sk = Arc::new(master_sk_from_mnemonic(&cli.mnemonic)?);
 
     if let Some(index) = cli.derive_index {
         let address_prefix = infer_address_prefix("", &cli.address_prefix)?;
-        print_derived_addresses(&wallet_root, index, cli.mode, &address_prefix);
+        print_derived_addresses(&master_sk, index, cli.mode, &address_prefix);
         return Ok(());
     }
 
@@ -126,8 +123,8 @@ fn main() -> Result<()> {
     );
 
     let hit = match cli.search_mode {
-        SearchMode::Fast => search_fast(wallet_root, &config)?,
-        SearchMode::Lowest => search_lowest(wallet_root, &config)?,
+        SearchMode::Fast => search_fast(master_sk, &config)?,
+        SearchMode::Lowest => search_lowest(master_sk, &config)?,
     };
 
     match hit {
@@ -209,15 +206,10 @@ impl SearchConfig {
     }
 }
 
-fn wallet_root_from_mnemonic(mnemonic_phrase: &str) -> Result<SecretKey> {
+fn master_sk_from_mnemonic(mnemonic_phrase: &str) -> Result<SecretKey> {
     let mnemonic = Mnemonic::from_str(mnemonic_phrase).context("invalid mnemonic")?;
     let seed = mnemonic.to_seed("");
-    let master_sk = SecretKey::from_seed(&seed);
-
-    Ok(master_sk
-        .derive_hardened(CHIA_PURPOSE)
-        .derive_hardened(CHIA_COIN_TYPE)
-        .derive_hardened(CHIA_ACCOUNT))
+    Ok(SecretKey::from_seed(&seed))
 }
 
 fn search_fast(wallet_root: Arc<SecretKey>, config: &SearchConfig) -> Result<Option<SearchHit>> {
@@ -369,11 +361,14 @@ fn address_for_child(
     mode: CandidateMode,
     address_prefix: &str,
 ) -> String {
-    let child = match mode {
-        CandidateMode::Hardened => wallet_root.derive_hardened(index),
-        CandidateMode::Unhardened => DerivableKey::derive_unhardened(wallet_root, index),
+    let synthetic_pk = match mode {
+        CandidateMode::Hardened => master_to_wallet_hardened(wallet_root, index)
+            .derive_synthetic()
+            .public_key(),
+        CandidateMode::Unhardened => {
+            master_to_wallet_unhardened(&wallet_root.public_key(), index).derive_synthetic()
+        }
     };
-    let synthetic_pk = child.public_key().derive_synthetic();
     let puzzle_hash = StandardArgs::new(synthetic_pk).curry_tree_hash().into();
 
     Address::new(puzzle_hash, address_prefix.to_string())
@@ -536,14 +531,14 @@ mod tests {
 
     #[test]
     fn derives_known_unhardened_address() {
-        let wallet_root = wallet_root_from_mnemonic(
+        let master_sk = master_sk_from_mnemonic(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         )
         .unwrap();
 
         assert_eq!(
-            address_for_child(&wallet_root, 11, CandidateMode::Unhardened, "xch"),
-            "xch1gtrwe5s7u5duxuj5l5pgaem34ae5fh2wdewt6wk32wwe36y620vqk0exxa"
+            address_for_child(&master_sk, 0, CandidateMode::Unhardened, "xch"),
+            "xch10y5nzscm52tkudhr40qtxhypr9y9x670wlee4rveas4pttcwsj7q7psn9w"
         );
     }
 }
