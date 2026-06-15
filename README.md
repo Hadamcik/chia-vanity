@@ -23,6 +23,7 @@ xch1name...
 
 - Derives wallet addresses from your mnemonic (`m/12381/8444/2/i`)
 - Matches prefix, suffix, or both at the same time
+- Can derive and print the address at an exact index without searching
 - Supports:
   - hardened
   - unhardened
@@ -100,11 +101,24 @@ cargo run --release -- \
   --suffix ace
 ```
 
+### Exact index
+
+Use `--derive-index` to print the address at a known derivation index instead of searching:
+
+```bash
+cargo run --release -- \
+  "word1 word2 ... word24" \
+  --derive-index 123456
+```
+
+This respects `--mode hardened|unhardened|both` and `--address-prefix xch|txch`.
+
 ### Useful options
 
 ```bash
 --mode hardened|unhardened|both
 --search-mode fast|lowest
+--derive-index 123456
 --threads 0
 --start-index 0
 --chunk-size 10000

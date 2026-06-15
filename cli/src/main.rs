@@ -44,6 +44,10 @@ struct Cli {
     #[arg(long = "address-prefix", default_value = "xch")]
     address_prefix: String,
 
+    /// Derive and print the address at this exact index instead of searching.
+    #[arg(long)]
+    derive_index: Option<u32>,
+
     /// First derivation index to check.
     #[arg(long, default_value_t = 0)]
     start_index: u32,
@@ -104,8 +108,15 @@ struct SearchConfig {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config = SearchConfig::from_cli(&cli)?;
     let wallet_root = Arc::new(wallet_root_from_mnemonic(&cli.mnemonic)?);
+
+    if let Some(index) = cli.derive_index {
+        let address_prefix = infer_address_prefix("", &cli.address_prefix)?;
+        print_derived_addresses(&wallet_root, index, cli.mode, &address_prefix);
+        return Ok(());
+    }
+
+    let config = SearchConfig::from_cli(&cli)?;
 
     eprintln!(
         "Searching {} addresses from index {} with {} thread(s)...",
@@ -132,6 +143,19 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_derived_addresses(wallet_root: &SecretKey, index: u32, mode: Mode, address_prefix: &str) {
+    println!("DERIVED ADDRESS");
+    println!("index   : {index}");
+
+    for &candidate_mode in candidate_modes(mode) {
+        println!("mode    : {}", candidate_mode_label(candidate_mode));
+        println!(
+            "address : {}",
+            address_for_child(wallet_root, index, candidate_mode, address_prefix)
+        );
+    }
 }
 
 impl SearchConfig {
@@ -508,5 +532,18 @@ mod tests {
 
         assert!(is_better_hit(&unhardened, Some(&hardened)));
         assert!(!is_better_hit(&hardened, Some(&unhardened)));
+    }
+
+    #[test]
+    fn derives_known_unhardened_address() {
+        let wallet_root = wallet_root_from_mnemonic(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        )
+        .unwrap();
+
+        assert_eq!(
+            address_for_child(&wallet_root, 11, CandidateMode::Unhardened, "xch"),
+            "xch1gtrwe5s7u5duxuj5l5pgaem34ae5fh2wdewt6wk32wwe36y620vqk0exxa"
+        );
     }
 }
