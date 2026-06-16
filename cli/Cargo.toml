@@ -11,3 +11,4 @@ chia-puzzle-types = "0.36.1"
 chia-sdk-types = { path = "../external/chia-wallet-sdk/crates/chia-sdk-types" }
 chia-sdk-utils = { path = "../external/chia-wallet-sdk/crates/chia-sdk-utils" }
 clap = { version = "4.5.50", features = ["derive"] }
+rpassword = "7.5.4"

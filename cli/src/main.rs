@@ -1,5 +1,7 @@
 use std::{
     cmp::Ordering,
+    env,
+    io::{self, IsTerminal, Read},
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering as AtomicOrdering},
@@ -18,6 +20,7 @@ use clap::{Parser, ValueEnum};
 
 const BECH32_DATA_CHARS: &str = "023456789acdefghjklmnpqrstuvwxyz";
 const CHIA_ADDRESS_PREFIXES: [&str; 2] = ["xch1", "txch1"];
+const MNEMONIC_ENV_VAR: &str = "CHIA_VANITY_MNEMONIC";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -26,8 +29,14 @@ const CHIA_ADDRESS_PREFIXES: [&str; 2] = ["xch1", "txch1"];
     about = "Find Chia receive addresses matching a prefix and/or suffix."
 )]
 struct Cli {
-    /// The wallet mnemonic phrase.
-    mnemonic: String,
+    /// The wallet mnemonic phrase, passed directly on the command line.
+    ///
+    /// INSECURE: other users can read it via `ps`/`/proc`, and it is saved in
+    /// shell history. Omit it to provide the mnemonic privately via an
+    /// interactive hidden prompt, stdin (a pipe or `< file` redirect), or the
+    /// CHIA_VANITY_MNEMONIC environment variable.
+    #[arg(value_name = "MNEMONIC")]
+    mnemonic: Option<String>,
 
     /// Wanted address prefix. Supports full Chia wrappers like xch1ace or txch1ace.
     #[arg(long, short = 'p')]
@@ -105,15 +114,18 @@ struct SearchConfig {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let master_sk = Arc::new(master_sk_from_mnemonic(&cli.mnemonic)?);
 
+    // Validate everything we can before asking for the mnemonic, so we never
+    // prompt for the secret on a command that is going to fail anyway.
     if let Some(index) = cli.derive_index {
         let address_prefix = infer_address_prefix("", &cli.address_prefix)?;
+        let master_sk = resolve_master_sk(&cli)?;
         print_derived_addresses(&master_sk, index, cli.mode, &address_prefix);
         return Ok(());
     }
 
     let config = SearchConfig::from_cli(&cli)?;
+    let master_sk = resolve_master_sk(&cli)?;
 
     eprintln!(
         "Searching {} addresses from index {} with {} thread(s)...",
@@ -204,6 +216,76 @@ impl SearchConfig {
             chunk_size: cli.chunk_size,
         })
     }
+}
+
+fn resolve_master_sk(cli: &Cli) -> Result<Arc<SecretKey>> {
+    let mnemonic = resolve_mnemonic(cli)?;
+    Ok(Arc::new(master_sk_from_mnemonic(&mnemonic)?))
+}
+
+/// Resolve the mnemonic, preferring sources that keep it off the command line.
+///
+/// Precedence: the (insecure) positional argument, then `$CHIA_VANITY_MNEMONIC`,
+/// then stdin if it is piped or redirected, otherwise an interactive hidden
+/// prompt. Env is checked before
+/// stdin so configuring `$CHIA_VANITY_MNEMONIC` still works under cron/systemd
+/// where stdin is `/dev/null`.
+fn resolve_mnemonic(cli: &Cli) -> Result<String> {
+    if let Some(mnemonic) = &cli.mnemonic {
+        eprintln!(
+            "warning: passing the mnemonic as a command-line argument is insecure; \
+             it is visible to other processes via `ps` and saved in shell history"
+        );
+        return normalize_mnemonic(mnemonic);
+    }
+
+    if let Some(mnemonic) = env_mnemonic()? {
+        return Ok(mnemonic);
+    }
+
+    // Nothing on the command line: prompt when attached to a terminal, otherwise
+    // read the mnemonic from stdin (a pipe or a `< file` redirect).
+    if io::stdin().is_terminal() {
+        prompt_mnemonic()
+    } else {
+        read_mnemonic(&mut io::stdin().lock())
+            .context("could not read a mnemonic from stdin (pipe one in or redirect with `< file`)")
+    }
+}
+
+fn env_mnemonic() -> Result<Option<String>> {
+    match env::var(MNEMONIC_ENV_VAR) {
+        // A blank value is treated as unset so it can fall through to the prompt.
+        Ok(value) if value.trim().is_empty() => Ok(None),
+        Ok(value) => normalize_mnemonic(&value).map(Some),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => bail!("{MNEMONIC_ENV_VAR} contains invalid UTF-8"),
+    }
+}
+
+fn prompt_mnemonic() -> Result<String> {
+    let phrase = rpassword::prompt_password("Enter mnemonic (input hidden): ")
+        .context("failed to read mnemonic from terminal")?;
+    normalize_mnemonic(&phrase)
+}
+
+fn read_mnemonic(reader: &mut impl Read) -> Result<String> {
+    let mut buffer = String::new();
+    reader
+        .read_to_string(&mut buffer)
+        .context("failed to read mnemonic")?;
+    normalize_mnemonic(&buffer)
+}
+
+/// Collapse leading, trailing, and repeated whitespace (including the newlines
+/// that files, pipes, and prompts add) into single spaces so the phrase parses
+/// regardless of how it was supplied.
+fn normalize_mnemonic(raw: &str) -> Result<String> {
+    let normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        bail!("mnemonic is empty");
+    }
+    Ok(normalized)
 }
 
 fn master_sk_from_mnemonic(mnemonic_phrase: &str) -> Result<SecretKey> {
@@ -527,6 +609,25 @@ mod tests {
 
         assert!(is_better_hit(&unhardened, Some(&hardened)));
         assert!(!is_better_hit(&hardened, Some(&unhardened)));
+    }
+
+    #[test]
+    fn normalizes_surrounding_and_repeated_whitespace() {
+        assert_eq!(
+            normalize_mnemonic("  abandon   abandon\nabout \t").unwrap(),
+            "abandon abandon about"
+        );
+    }
+
+    #[test]
+    fn rejects_blank_mnemonic() {
+        assert!(normalize_mnemonic("   \n\t ").is_err());
+    }
+
+    #[test]
+    fn reads_and_normalizes_mnemonic_from_reader() {
+        let mut reader = "abandon abandon about\n".as_bytes();
+        assert_eq!(read_mnemonic(&mut reader).unwrap(), "abandon abandon about");
     }
 
     #[test]
