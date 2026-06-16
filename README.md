@@ -58,7 +58,11 @@ Valid characters (alphabetically sorted):
 
 ## 📦 Build
 
+The Chia Wallet SDK is included as a git submodule. Initialize it (or clone with
+`git clone --recurse-submodules`) before building:
+
 ```bash
+git submodule update --init
 cargo build --release
 ```
 
