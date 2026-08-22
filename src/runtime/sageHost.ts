@@ -56,7 +56,27 @@ async function ensureCapability(capability: UserBridgeCapability): Promise<boole
 
     const response = await client.app.requestCapabilityGrant({ capability });
 
-    return response.granted || Boolean(response.alreadyGranted);
+    return (
+        response.granted ||
+        Boolean(response.alreadyGranted) ||
+        Boolean(response.fullGrantedCapabilities?.includes(capability))
+    );
+}
+
+function unwrapSageKeyResponse(response: unknown): KeyInfo | null {
+    if (response && typeof response === 'object' && 'key' in response) {
+        return (response as { key?: KeyInfo | null }).key ?? null;
+    }
+
+    return (response as KeyInfo | null) ?? null;
+}
+
+function unwrapSageSecretResponse(response: unknown): SecretKeyInfo | null {
+    if (response && typeof response === 'object' && 'secrets' in response) {
+        return (response as { secrets?: SecretKeyInfo | null }).secrets ?? null;
+    }
+
+    return (response as SecretKeyInfo | null) ?? null;
 }
 
 export function getSageHost(): SageHostBridge | null {
@@ -126,7 +146,7 @@ export function getSageHost(): SageHostBridge | null {
                 fingerprint: null,
             });
 
-            return response.key;
+            return unwrapSageKeyResponse(response);
         },
 
         async getSecretKey(fingerprint) {
@@ -140,7 +160,7 @@ export function getSageHost(): SageHostBridge | null {
                 fingerprint,
             });
 
-            return response.secrets;
+            return unwrapSageSecretResponse(response);
         },
     };
 }

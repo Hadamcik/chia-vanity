@@ -374,7 +374,7 @@ export default function VanityApp() {
             setStatus('Sage public key loaded');
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
-            setStatus('Sage key failed');
+            setStatus('Could not import key');
         } finally {
             setLoadingSageKey(false);
         }
@@ -441,7 +441,7 @@ export default function VanityApp() {
             setStatus(secret.mnemonic ? 'Sage mnemonic loaded' : 'Sage private key loaded');
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
-            setStatus('Sage secret failed');
+            setStatus('Could not import private key');
         } finally {
             setLoadingSageSecret(false);
         }
@@ -573,7 +573,6 @@ export default function VanityApp() {
                                             ? 'Import public key'
                                             : 'Grant and import public key'}
                                 </button>
-                                <PermissionPill granted={hasSageKeyPermission} label="wallet.get_key" />
                                 {sageKey ? (
                                     <div style={styles.sageKeyLabel}>
                                         {sageKey.name} · {sageKey.fingerprint}
@@ -598,7 +597,6 @@ export default function VanityApp() {
                                             ? 'Import private key'
                                             : 'Grant and import private key'}
                                 </button>
-                                <PermissionPill granted={hasSageSecretPermission} label="wallet.get_secret_key" />
                                 {sageKey ? (
                                     <div style={styles.sageKeyLabel}>
                                         {sageKey.name} · {sageKey.fingerprint}
@@ -933,19 +931,6 @@ function FieldError({ message }: { message: string | null }) {
     }
 
     return <span style={styles.fieldError}>{message}</span>;
-}
-
-function PermissionPill({ granted, label }: { granted: boolean; label: string }) {
-    return (
-        <span
-            style={{
-                ...styles.permissionPill,
-                ...(granted ? styles.permissionGranted : styles.permissionMissing),
-            }}
-        >
-            {granted ? 'Granted' : 'Needs permission'} · {label}
-        </span>
-    );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -1471,26 +1456,6 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 12,
         fontWeight: 750,
         overflowWrap: 'anywhere',
-    },
-    permissionPill: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        minHeight: 30,
-        padding: '0 10px',
-        borderRadius: 8,
-        fontSize: 12,
-        fontWeight: 750,
-        overflowWrap: 'anywhere',
-    },
-    permissionGranted: {
-        color: '#93f1d3',
-        background: 'rgba(65, 214, 163, 0.1)',
-        border: '1px solid rgba(65, 214, 163, 0.2)',
-    },
-    permissionMissing: {
-        color: '#ffd08a',
-        background: 'rgba(255, 189, 89, 0.08)',
-        border: '1px solid rgba(255, 189, 89, 0.22)',
     },
     warningBox: {
         display: 'grid',
