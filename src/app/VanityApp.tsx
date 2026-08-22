@@ -614,7 +614,7 @@ export default function VanityApp() {
                                 <div style={styles.warningBox}>
                                     <strong>Mnemonic safety</strong>
                                     <span>
-                                        This app does not send your mnemonic anywhere, but pasting a mnemonic into websites is still risky. Other sites may be dishonest, and browser extensions can read page contents. Installing this app into Sage is safer because Sage can provide keys through its permission prompts.
+                                        This app does not send your mnemonic anywhere, but pasting a mnemonic into websites is still risky. Other sites may be dishonest, and browser extensions can read page contents. Installing this app into Sage is safer because Sage provides stronger sandboxing and key access through permission prompts.
                                     </span>
                                     <button
                                         style={styles.warningButton}
