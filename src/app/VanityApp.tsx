@@ -16,8 +16,12 @@ import {
 
 type WorkMode = 'search' | 'derive';
 type AddressPrefix = 'xch' | 'txch';
+type CredentialKind = 'public' | 'private';
+type CredentialSource = 'sage' | 'manual';
 
 const MAX_INDEX = 0xffffffff;
+const WALLET_KEY_CAPABILITY = 'wallet.get_key';
+const WALLET_SECRET_CAPABILITY = 'wallet.get_secret_key';
 
 interface SageKeyMaterial {
     fingerprint: number;
@@ -33,6 +37,8 @@ export default function VanityApp() {
     }>(null);
 
     const [workMode, setWorkMode] = useState<WorkMode>('search');
+    const [credentialKind, setCredentialKind] = useState<CredentialKind>('public');
+    const [credentialSource, setCredentialSource] = useState<CredentialSource>('sage');
     const [mnemonic, setMnemonic] = useState('');
     const [masterSecretKey, setMasterSecretKey] = useState('');
     const [masterPublicKey, setMasterPublicKey] = useState('');
@@ -56,8 +62,10 @@ export default function VanityApp() {
     const [error, setError] = useState('');
     const [status, setStatus] = useState('Idle');
     const [sageKey, setSageKey] = useState<SageKeyMaterial | null>(null);
+    const [sageCapabilities, setSageCapabilities] = useState<string[]>([]);
     const [loadingSageKey, setLoadingSageKey] = useState(false);
     const [loadingSageSecret, setLoadingSageSecret] = useState(false);
+    const [allowUnsafeMnemonicPaste, setAllowUnsafeMnemonicPaste] = useState(false);
 
     useEffect(() => {
         const maybeLoadHostInfo = async () => {
@@ -66,15 +74,56 @@ export default function VanityApp() {
                     permissions: { network: boolean; persistent_storage: boolean };
                     storage: { bytesUsed: number; quotaBytes: number | null };
                 }>;
+                getSageCapabilities?: () => Promise<string[]>;
             };
 
             if (typeof candidate.getHostCapabilities === 'function') {
                 const info = await candidate.getHostCapabilities();
                 setHostInfo(info);
             }
+
+            if (typeof candidate.getSageCapabilities === 'function') {
+                const capabilities = await candidate.getSageCapabilities();
+                setSageCapabilities(capabilities);
+            }
         };
 
         void maybeLoadHostInfo();
+    }, []);
+
+    useEffect(() => {
+        const candidate = runtime as {
+            onSageCapabilitiesChange?: (cb: (capabilities: string[]) => void) => Promise<() => void>;
+        };
+        let unsubscribe: (() => void) | undefined;
+
+        const setup = async () => {
+            if (typeof candidate.onSageCapabilitiesChange !== 'function') {
+                return;
+            }
+
+            unsubscribe = await candidate.onSageCapabilitiesChange((capabilities) => {
+                setSageCapabilities(capabilities);
+
+                if (!capabilities.includes(WALLET_KEY_CAPABILITY)) {
+                    setSageKey((prev) => {
+                        if (prev) {
+                            setMasterPublicKey('');
+                        }
+
+                        return null;
+                    });
+                }
+
+                if (!capabilities.includes(WALLET_SECRET_CAPABILITY)) {
+                    setMasterSecretKey('');
+                }
+            });
+        };
+
+        void setup();
+
+        return () => unsubscribe?.();
     }, []);
 
     useEffect(() => {
@@ -127,20 +176,40 @@ export default function VanityApp() {
         };
     }, []);
 
+    useEffect(() => {
+        if (mode !== 'unhardened' && credentialKind === 'public') {
+            setCredentialKind('private');
+        }
+    }, [credentialKind, mode]);
+
     const inputsDisabled = uiState !== 'idle' || deriving;
+    const isSage = hostInfo !== null;
+    const activeCredentialSource: CredentialSource = isSage ? credentialSource : 'manual';
+    const canUsePublicCredential = mode === 'unhardened';
+    const hasSageKeyPermission = sageCapabilities.includes(WALLET_KEY_CAPABILITY);
+    const hasSageSecretPermission = sageCapabilities.includes(WALLET_SECRET_CAPABILITY);
     const prefixValidationError = validateWantedPrefix(wantedPrefix);
     const suffixValidationError = validateWantedSuffix(wantedSuffix);
     const patternValidationError = validateWantedPatterns(wantedPrefix, wantedSuffix);
     const publicKeyValidationError =
-        mode === 'unhardened' ? validateMasterPublicKey(masterPublicKey) : null;
+        credentialKind === 'public' && mode === 'unhardened'
+            ? validateMasterPublicKey(masterPublicKey)
+            : null;
     const hasMnemonic = mnemonic.trim().length > 0;
     const hasSecretKey = masterSecretKey.trim().length > 0;
     const hasValidPublicKey =
         masterPublicKey.trim().length > 0 && !publicKeyValidationError;
     const hasRequiredKeyMaterial =
-        mode === 'unhardened'
-            ? hasMnemonic || hasSecretKey || hasValidPublicKey
+        credentialKind === 'public'
+            ? canUsePublicCredential && hasValidPublicKey
             : hasMnemonic || hasSecretKey;
+    const credentialReadyLabel = credentialKind === 'public'
+        ? 'Public key ready'
+        : hasSecretKey
+            ? 'Private key ready'
+            : hasMnemonic
+                ? 'Mnemonic ready'
+                : 'Choose a key source';
 
     const canStart = useMemo(() => (
         hasRequiredKeyMaterial &&
@@ -177,9 +246,9 @@ export default function VanityApp() {
         setUiState('running');
 
         const req: StartSearchRequest = {
-            mnemonic: mnemonic.trim(),
-            masterSecretKey: normalizeSecretKeyInput(masterSecretKey),
-            masterPublicKey: mode === 'unhardened' ? normalizePublicKeyInput(masterPublicKey) : '',
+            mnemonic: credentialKind === 'private' ? mnemonic.trim() : '',
+            masterSecretKey: credentialKind === 'private' ? normalizeSecretKeyInput(masterSecretKey) : '',
+            masterPublicKey: credentialKind === 'public' ? normalizePublicKeyInput(masterPublicKey) : '',
             wantedPrefix: wantedPrefix.trim(),
             wantedSuffix: wantedSuffix.trim(),
             startIndex: clampU32(startIndex),
@@ -222,9 +291,9 @@ export default function VanityApp() {
 
         try {
             const derived = await runtime.deriveAddresses({
-                mnemonic: mnemonic.trim(),
-                masterSecretKey: normalizeSecretKeyInput(masterSecretKey),
-                masterPublicKey: mode === 'unhardened' ? normalizePublicKeyInput(masterPublicKey) : '',
+                mnemonic: credentialKind === 'private' ? mnemonic.trim() : '',
+                masterSecretKey: credentialKind === 'private' ? normalizeSecretKeyInput(masterSecretKey) : '',
+                masterPublicKey: credentialKind === 'public' ? normalizePublicKeyInput(masterPublicKey) : '',
                 index: clampU32(deriveIndex),
                 mode,
                 addressPrefix: derivePrefix,
@@ -252,6 +321,16 @@ export default function VanityApp() {
         }
     }
 
+    async function refreshSageCapabilities() {
+        const candidate = runtime as {
+            getSageCapabilities?: () => Promise<string[]>;
+        };
+
+        if (typeof candidate.getSageCapabilities === 'function') {
+            setSageCapabilities(await candidate.getSageCapabilities());
+        }
+    }
+
     async function handleLoadSageKey() {
         const candidate = runtime as {
             getSageKeyMaterial?: () => Promise<SageKeyMaterial | null>;
@@ -276,6 +355,7 @@ export default function VanityApp() {
 
             setSageKey(key);
             setMasterPublicKey(normalizePublicKeyInput(key.publicKey));
+            await refreshSageCapabilities();
             setStatus('Sage public key loaded');
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
@@ -310,6 +390,7 @@ export default function VanityApp() {
             if (activeKey) {
                 setSageKey(activeKey);
                 setMasterPublicKey(normalizePublicKeyInput(activeKey.publicKey));
+                await refreshSageCapabilities();
             }
         }
 
@@ -341,6 +422,7 @@ export default function VanityApp() {
             }
 
             setMasterSecretKey(normalizeSecretKeyInput(secret.secretKey));
+            await refreshSageCapabilities();
             setStatus(secret.mnemonic ? 'Sage mnemonic loaded' : 'Sage private key loaded');
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
@@ -396,71 +478,168 @@ export default function VanityApp() {
                             />
                         </div>
 
-                        <label style={styles.fieldFull}>
-                            <span style={styles.labelText}>
-                                Mnemonic {mode === 'unhardened' ? 'or private key source' : 'required'}
-                            </span>
-                            <textarea
-                                style={styles.textarea}
-                                rows={4}
-                                value={mnemonic}
-                                onChange={(e) => setMnemonic(e.target.value)}
-                                placeholder={
-                                    mode === 'unhardened'
-                                        ? 'optional when using a master public key'
-                                        : 'word word word ...'
-                                }
-                                disabled={inputsDisabled}
-                            />
-                        </label>
-
-                        {hostInfo ? (
-                            <div style={styles.sageActions}>
-                                <button
-                                    style={{
-                                        ...styles.secondaryButton,
-                                        ...(loadingSageKey ? styles.disabledButton : null),
-                                    }}
-                                    onClick={handleLoadSageKey}
-                                    disabled={inputsDisabled || loadingSageKey}
-                                >
-                                    {loadingSageKey ? 'Loading key' : 'Load Sage key'}
-                                </button>
-                                <button
-                                    style={{
-                                        ...styles.secondaryButton,
-                                        ...(loadingSageSecret ? styles.disabledButton : null),
-                                    }}
-                                    onClick={handleLoadSageSecret}
-                                    disabled={inputsDisabled || loadingSageSecret}
-                                >
-                                    {loadingSageSecret ? 'Requesting' : 'Load Sage private key'}
-                                </button>
-                                {sageKey ? (
-                                    <div style={styles.sageKeyLabel}>
-                                        {sageKey.name} · {sageKey.fingerprint}
-                                    </div>
-                                ) : null}
+                        <section style={styles.credentialPanel}>
+                            <div style={styles.credentialHeader}>
+                                <div>
+                                    <h3 style={styles.credentialTitle}>Key source</h3>
+                                    <div style={styles.subtleLine}>{credentialReadyLabel}</div>
+                                </div>
+                                {isSage ? (
+                                    <span style={styles.sageBadge}>Sage</span>
+                                ) : (
+                                    <span style={styles.browserBadge}>Browser</span>
+                                )}
                             </div>
-                        ) : null}
 
-                        <label style={{ ...styles.fieldFull, marginTop: 12 }}>
-                            <span style={styles.labelText}>
-                                Master public key {mode === 'unhardened' ? 'for unhardened mode' : 'unhardened only'}
-                            </span>
-                            <input
-                                style={{
-                                    ...styles.input,
-                                    ...(publicKeyValidationError ? styles.invalidInput : null),
-                                }}
-                                value={masterPublicKey}
-                                onChange={(e) => setMasterPublicKey(e.target.value)}
-                                placeholder="96 hex characters"
-                                aria-invalid={Boolean(publicKeyValidationError)}
-                                disabled={inputsDisabled}
-                            />
-                            <FieldError message={publicKeyValidationError} />
-                        </label>
+                            <div style={styles.choiceGrid}>
+                                <button
+                                    style={{
+                                        ...styles.choiceButton,
+                                        ...(credentialKind === 'public' ? styles.choiceButtonActive : null),
+                                        ...(!canUsePublicCredential ? styles.disabledButton : null),
+                                    }}
+                                    onClick={() => setCredentialKind('public')}
+                                    disabled={inputsDisabled || !canUsePublicCredential}
+                                >
+                                    <span style={styles.choiceTitle}>Public key</span>
+                                    <span style={styles.choiceText}>Unhardened only</span>
+                                </button>
+                                <button
+                                    style={{
+                                        ...styles.choiceButton,
+                                        ...(credentialKind === 'private' ? styles.choiceButtonActive : null),
+                                    }}
+                                    onClick={() => setCredentialKind('private')}
+                                    disabled={inputsDisabled}
+                                >
+                                    <span style={styles.choiceTitle}>Mnemonic</span>
+                                    <span style={styles.choiceText}>Unhardened and hardened</span>
+                                </button>
+                            </div>
+
+                            {isSage ? (
+                                <div style={styles.sourceSwitch}>
+                                    <button
+                                        style={{
+                                            ...styles.sourceButton,
+                                            ...(activeCredentialSource === 'sage' ? styles.sourceButtonActive : null),
+                                        }}
+                                        onClick={() => setCredentialSource('sage')}
+                                        disabled={inputsDisabled}
+                                    >
+                                        Import from Sage
+                                    </button>
+                                    <button
+                                        style={{
+                                            ...styles.sourceButton,
+                                            ...(activeCredentialSource === 'manual' ? styles.sourceButtonActive : null),
+                                        }}
+                                        onClick={() => setCredentialSource('manual')}
+                                        disabled={inputsDisabled}
+                                    >
+                                        Paste manually
+                                    </button>
+                                </div>
+                            ) : null}
+
+                            {activeCredentialSource === 'sage' && credentialKind === 'public' ? (
+                                <div style={styles.sageActions}>
+                                    <button
+                                        style={{
+                                            ...styles.secondaryButton,
+                                            ...(loadingSageKey ? styles.disabledButton : null),
+                                        }}
+                                        onClick={handleLoadSageKey}
+                                        disabled={inputsDisabled || loadingSageKey}
+                                    >
+                                        {loadingSageKey
+                                            ? 'Importing'
+                                            : hasSageKeyPermission
+                                                ? 'Import public key'
+                                                : 'Grant and import public key'}
+                                    </button>
+                                    <PermissionPill granted={hasSageKeyPermission} label="wallet.get_key" />
+                                    {sageKey ? (
+                                        <div style={styles.sageKeyLabel}>
+                                            {sageKey.name} · {sageKey.fingerprint}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            ) : null}
+
+                            {activeCredentialSource === 'sage' && credentialKind === 'private' ? (
+                                <div style={styles.sageActions}>
+                                    <button
+                                        style={{
+                                            ...styles.secondaryButton,
+                                            ...(loadingSageSecret ? styles.disabledButton : null),
+                                        }}
+                                        onClick={handleLoadSageSecret}
+                                        disabled={inputsDisabled || loadingSageSecret}
+                                    >
+                                        {loadingSageSecret
+                                            ? 'Requesting'
+                                            : hasSageSecretPermission
+                                                ? 'Import private key'
+                                                : 'Grant and import private key'}
+                                    </button>
+                                    <PermissionPill granted={hasSageSecretPermission} label="wallet.get_secret_key" />
+                                    {sageKey ? (
+                                        <div style={styles.sageKeyLabel}>
+                                            {sageKey.name} · {sageKey.fingerprint}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            ) : null}
+
+                            {activeCredentialSource === 'manual' && credentialKind === 'public' ? (
+                                <label style={styles.fieldFull}>
+                                    <span style={styles.labelText}>Master public key</span>
+                                    <input
+                                        style={{
+                                            ...styles.input,
+                                            ...(publicKeyValidationError ? styles.invalidInput : null),
+                                        }}
+                                        value={masterPublicKey}
+                                        onChange={(e) => setMasterPublicKey(e.target.value)}
+                                        placeholder="96 hex characters"
+                                        aria-invalid={Boolean(publicKeyValidationError)}
+                                        disabled={inputsDisabled}
+                                    />
+                                    <FieldError message={publicKeyValidationError} />
+                                </label>
+                            ) : null}
+
+                            {activeCredentialSource === 'manual' && credentialKind === 'private' && !isSage && !allowUnsafeMnemonicPaste ? (
+                                <div style={styles.warningBox}>
+                                    <strong>Mnemonic safety</strong>
+                                    <span>
+                                        This app does not send your mnemonic anywhere, but pasting a mnemonic into websites is still risky. Other sites may be dishonest, and browser extensions can read page contents. Installing this app into Sage is safer because Sage can provide keys through its permission prompts.
+                                    </span>
+                                    <button
+                                        style={styles.warningButton}
+                                        onClick={() => setAllowUnsafeMnemonicPaste(true)}
+                                        disabled={inputsDisabled}
+                                    >
+                                        Allow mnemonic paste
+                                    </button>
+                                </div>
+                            ) : null}
+
+                            {activeCredentialSource === 'manual' && credentialKind === 'private' && (isSage || allowUnsafeMnemonicPaste) ? (
+                                <label style={styles.fieldFull}>
+                                    <span style={styles.labelText}>Mnemonic</span>
+                                    <textarea
+                                        style={styles.textarea}
+                                        rows={4}
+                                        value={mnemonic}
+                                        onChange={(e) => setMnemonic(e.target.value)}
+                                        placeholder="word word word ..."
+                                        disabled={inputsDisabled}
+                                    />
+                                </label>
+                            ) : null}
+                        </section>
 
                         {workMode === 'search' ? (
                             <div style={styles.formStack}>
@@ -550,11 +729,12 @@ export default function VanityApp() {
                                     <div style={styles.formError}>{patternValidationError}</div>
                                 ) : null}
                                 {!hasRequiredKeyMaterial ? (
-                                    <div style={styles.formError}>
-                                        {mode === 'unhardened'
-                                            ? 'Mnemonic, Sage private key, or master public key is required.'
-                                            : 'Mnemonic or Sage private key is required for hardened mode.'}
-                                    </div>
+                                    <CredentialHint
+                                        isSage={isSage}
+                                        kind={credentialKind}
+                                        source={activeCredentialSource}
+                                        publicAllowed={canUsePublicCredential}
+                                    />
                                 ) : null}
 
                                 <div style={styles.actions}>
@@ -631,11 +811,12 @@ export default function VanityApp() {
                                     </button>
                                 </div>
                                 {!hasRequiredKeyMaterial ? (
-                                    <div style={styles.formError}>
-                                        {mode === 'unhardened'
-                                            ? 'Mnemonic, Sage private key, or master public key is required.'
-                                            : 'Mnemonic or Sage private key is required for hardened mode.'}
-                                    </div>
+                                    <CredentialHint
+                                        isSage={isSage}
+                                        kind={credentialKind}
+                                        source={activeCredentialSource}
+                                        publicAllowed={canUsePublicCredential}
+                                    />
                                 ) : null}
                             </div>
                         )}
@@ -738,6 +919,47 @@ function FieldError({ message }: { message: string | null }) {
     }
 
     return <span style={styles.fieldError}>{message}</span>;
+}
+
+function PermissionPill({ granted, label }: { granted: boolean; label: string }) {
+    return (
+        <span
+            style={{
+                ...styles.permissionPill,
+                ...(granted ? styles.permissionGranted : styles.permissionMissing),
+            }}
+        >
+            {granted ? 'Granted' : 'Needs permission'} · {label}
+        </span>
+    );
+}
+
+function CredentialHint({
+    isSage,
+    kind,
+    source,
+    publicAllowed,
+}: {
+    isSage: boolean;
+    kind: CredentialKind;
+    source: CredentialSource;
+    publicAllowed: boolean;
+}) {
+    let message = '';
+
+    if (kind === 'public' && !publicAllowed) {
+        message = 'Public-key mode is only available for unhardened derivation.';
+    } else if (isSage && source === 'sage') {
+        message = kind === 'public'
+            ? 'Import the public key from Sage to continue.'
+            : 'Import the private key from Sage to continue.';
+    } else {
+        message = kind === 'public'
+            ? 'Paste a master public key to continue.'
+            : 'Paste a mnemonic to continue.';
+    }
+
+    return <div style={styles.credentialHint}>{message}</div>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -978,6 +1200,106 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 7,
         minWidth: 0,
     },
+    credentialPanel: {
+        display: 'grid',
+        gap: 13,
+        padding: 14,
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.1)',
+        background: '#191914',
+    },
+    credentialHeader: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexWrap: 'wrap',
+    },
+    credentialTitle: {
+        margin: 0,
+        color: '#fffaf0',
+        fontSize: 13,
+        fontWeight: 800,
+        letterSpacing: 0,
+    },
+    choiceGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+        gap: 10,
+    },
+    choiceButton: {
+        display: 'grid',
+        gap: 5,
+        minHeight: 66,
+        padding: 12,
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.1)',
+        background: '#20201c',
+        color: '#f3f0e8',
+        textAlign: 'left',
+        cursor: 'pointer',
+    },
+    choiceButtonActive: {
+        borderColor: 'rgba(215, 255, 102, 0.45)',
+        background: 'rgba(215, 255, 102, 0.08)',
+    },
+    choiceTitle: {
+        fontSize: 13,
+        fontWeight: 850,
+    },
+    choiceText: {
+        color: '#a7a194',
+        fontSize: 12,
+        lineHeight: 1.35,
+    },
+    sourceSwitch: {
+        display: 'inline-grid',
+        gridTemplateColumns: '1fr 1fr',
+        justifySelf: 'start',
+        padding: 3,
+        borderRadius: 8,
+        background: '#10100e',
+        border: '1px solid rgba(243, 240, 232, 0.1)',
+    },
+    sourceButton: {
+        height: 32,
+        padding: '0 11px',
+        border: 0,
+        borderRadius: 6,
+        background: 'transparent',
+        color: '#9f9888',
+        fontSize: 12,
+        fontWeight: 800,
+        cursor: 'pointer',
+    },
+    sourceButtonActive: {
+        background: '#f3f0e8',
+        color: '#171714',
+    },
+    sageBadge: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        minHeight: 26,
+        padding: '0 9px',
+        borderRadius: 8,
+        border: '1px solid rgba(65, 214, 163, 0.25)',
+        background: 'rgba(65, 214, 163, 0.1)',
+        color: '#93f1d3',
+        fontSize: 11,
+        fontWeight: 850,
+    },
+    browserBadge: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        minHeight: 26,
+        padding: '0 9px',
+        borderRadius: 8,
+        border: '1px solid rgba(255, 189, 89, 0.24)',
+        background: 'rgba(255, 189, 89, 0.08)',
+        color: '#ffd08a',
+        fontSize: 11,
+        fontWeight: 850,
+    },
     formStack: {
         display: 'grid',
         gap: 14,
@@ -1039,6 +1361,11 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 13,
         lineHeight: 1.45,
     },
+    credentialHint: {
+        color: '#d6cfbf',
+        fontSize: 13,
+        lineHeight: 1.45,
+    },
     actions: {
         display: 'flex',
         alignItems: 'center',
@@ -1061,6 +1388,49 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 12,
         fontWeight: 750,
         overflowWrap: 'anywhere',
+    },
+    permissionPill: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        minHeight: 30,
+        padding: '0 10px',
+        borderRadius: 8,
+        fontSize: 12,
+        fontWeight: 750,
+        overflowWrap: 'anywhere',
+    },
+    permissionGranted: {
+        color: '#93f1d3',
+        background: 'rgba(65, 214, 163, 0.1)',
+        border: '1px solid rgba(65, 214, 163, 0.2)',
+    },
+    permissionMissing: {
+        color: '#ffd08a',
+        background: 'rgba(255, 189, 89, 0.08)',
+        border: '1px solid rgba(255, 189, 89, 0.22)',
+    },
+    warningBox: {
+        display: 'grid',
+        gap: 9,
+        padding: 12,
+        borderRadius: 8,
+        border: '1px solid rgba(255, 189, 89, 0.24)',
+        background: 'rgba(255, 189, 89, 0.08)',
+        color: '#ffe0ae',
+        fontSize: 13,
+        lineHeight: 1.45,
+    },
+    warningButton: {
+        justifySelf: 'start',
+        height: 34,
+        borderRadius: 8,
+        border: '1px solid rgba(255, 189, 89, 0.28)',
+        background: '#2d2619',
+        color: '#ffe0ae',
+        padding: '0 12px',
+        fontSize: 12,
+        fontWeight: 850,
+        cursor: 'pointer',
     },
     primaryButton: {
         height: 40,

@@ -49,6 +49,24 @@ export const sageRuntime = {
         };
     },
 
+    async getSageCapabilities() {
+        const host = getSageHost();
+        if (!host) {
+            return [];
+        }
+
+        return await host.getCapabilities();
+    },
+
+    async onSageCapabilitiesChange(cb: (capabilities: string[]) => void) {
+        const host = getSageHost();
+        if (!host) {
+            return () => {};
+        }
+
+        return host.onCapabilitiesChange(cb);
+    },
+
     async getSageSecretKey(fingerprint: number) {
         const host = getSageHost();
         if (!host) {

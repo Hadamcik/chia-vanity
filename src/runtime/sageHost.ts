@@ -2,6 +2,7 @@ import {
     callSage,
     initSageBridge,
     isSageInjected,
+    onSageRuntimeEvent,
     type SageAppInfo,
     type SageBridgeCapability,
     type SageKeyInfo,
@@ -23,6 +24,7 @@ export interface SageHostBridge {
     getStorageInfo(): Promise<SageStorageInfo>;
     getAppInfo(): Promise<SageAppInfo>;
     getCapabilities(): Promise<SageBridgeCapability[]>;
+    onCapabilitiesChange(cb: (capabilities: SageBridgeCapability[]) => void): () => void;
     requestCapabilityGrant(capability: SageBridgeCapability): Promise<boolean>;
     getKey(): Promise<SageKeyInfo | null>;
     getSecretKey(fingerprint: number): Promise<SageSecretKeyInfo | null>;
@@ -39,6 +41,12 @@ interface GetSecretKeyResponse {
 interface RequestCapabilityGrantResponse {
     granted: boolean;
     alreadyGranted?: boolean | null;
+}
+
+interface GrantedCapabilitiesChangeEvent {
+    removed: SageBridgeCapability[];
+    added: SageBridgeCapability[];
+    full: SageBridgeCapability[];
 }
 
 async function currentStorageInfo(): Promise<SageStorageInfo> {
@@ -97,6 +105,13 @@ export function getSageHost(): SageHostBridge | null {
 
         async getCapabilities() {
             return await callSage<SageBridgeCapability[]>('app.getCapabilities');
+        },
+
+        onCapabilitiesChange(cb) {
+            return onSageRuntimeEvent<GrantedCapabilitiesChangeEvent>(
+                'grantedCapabilitiesChange',
+                (event) => cb(event.full),
+            );
         },
 
         async requestCapabilityGrant(capability) {

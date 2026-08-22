@@ -68,6 +68,7 @@ interface SageListenEvent<T = unknown> {
 const SAGE_BRIDGE_VERSION = 'v1';
 const INVOKE_COMMAND = 'apps_invoke_bridge';
 const RESPONSE_EVENT = 'sage-bridge:response';
+const RUNTIME_EVENT = 'sage-bridge:event';
 const REQUEST_TIMEOUT_MS = 30000;
 
 let initialized = false;
@@ -76,6 +77,12 @@ const pending = new Map<string, {
     reject: (error: Error) => void;
     timeoutId: number;
 }>();
+const runtimeEventListeners = new Map<string, Set<(payload: unknown) => void>>();
+
+interface SageRuntimeEventEnvelope {
+    type: string;
+    payload: unknown;
+}
 
 function parseJsonOrNull(value: string | null | undefined): unknown {
     if (value == null) {
@@ -137,6 +144,26 @@ function settleInvokeResult(id: string, result: SageInvokeResult): boolean {
     return true;
 }
 
+function isRuntimeEventEnvelope(value: unknown): value is SageRuntimeEventEnvelope {
+    return Boolean(
+        value &&
+        typeof value === 'object' &&
+        typeof (value as Partial<SageRuntimeEventEnvelope>).type === 'string' &&
+        'payload' in value,
+    );
+}
+
+function dispatchRuntimeEvent(data: SageRuntimeEventEnvelope) {
+    const listeners = runtimeEventListeners.get(data.type);
+    if (!listeners) {
+        return;
+    }
+
+    for (const listener of listeners) {
+        listener(data.payload);
+    }
+}
+
 export function isSageInjected(): boolean {
     return typeof window !== 'undefined' && (
         Boolean((window as typeof window & { __SAGE__?: unknown }).__SAGE__) ||
@@ -161,12 +188,39 @@ export function initSageBridge(): boolean {
                 settleResponse(event.payload);
             },
         );
+        void webview.listen<SageRuntimeEventEnvelope>(
+            RUNTIME_EVENT,
+            (event: SageListenEvent<SageRuntimeEventEnvelope>) => {
+                if (isRuntimeEventEnvelope(event.payload)) {
+                    dispatchRuntimeEvent(event.payload);
+                }
+            },
+        );
 
         initialized = true;
         return true;
     } catch {
         return false;
     }
+}
+
+export function onSageRuntimeEvent<T>(
+    type: string,
+    handler: (payload: T) => void,
+): () => void {
+    let listeners = runtimeEventListeners.get(type);
+
+    if (!listeners) {
+        listeners = new Set();
+        runtimeEventListeners.set(type, listeners);
+    }
+
+    const wrapped = handler as (payload: unknown) => void;
+    listeners.add(wrapped);
+
+    return () => {
+        listeners?.delete(wrapped);
+    };
 }
 
 export async function callSage<T = unknown>(
