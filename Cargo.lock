@@ -832,6 +832,7 @@ dependencies = [
  "chia-sdk-types",
  "chia-sdk-utils",
  "clap",
+ "hex",
 ]
 
 [[package]]

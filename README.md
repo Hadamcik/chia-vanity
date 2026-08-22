@@ -2,7 +2,7 @@
 
 A high-performance, multi-core brute forcer for generating Chia wallet receive addresses with a desired prefix, suffix, or both.
 
-This tool derives real wallet addresses from your mnemonic and searches for ones matching patterns like:
+This tool derives real wallet addresses from your mnemonic, or from your master public key for unhardened derivation, and searches for ones matching patterns like:
 
 ```
 xch1name...
@@ -13,7 +13,8 @@ xch1name...
 
 ## ⚠️ Security Notice
 
-- This tool requires your **mnemonic (private key material)**.
+- Hardened derivation requires your **mnemonic (private key material)**.
+- Unhardened derivation can use a master public key instead.
 - **Never use a mnemonic you don’t trust this machine with.**
 - Build from source and review the code before running.
 
@@ -22,6 +23,7 @@ xch1name...
 ## 🚀 What it does
 
 - Derives wallet addresses from your mnemonic (`m/12381/8444/2/i`)
+- Supports public-key-only unhardened derivation
 - Matches prefix, suffix, or both at the same time
 - Can derive and print the address at an exact index without searching
 - Supports:
@@ -113,12 +115,35 @@ cargo run --release -- \
 
 This respects `--mode hardened|unhardened|both` and `--address-prefix xch|txch`.
 
+### Public-key-only unhardened mode
+
+For unhardened addresses, you can provide a 48-byte master public key as 96 hex characters and omit the mnemonic:
+
+```bash
+cargo run --release -- \
+  --public-key "<96 hex chars>" \
+  --mode unhardened \
+  --prefix xch1name
+```
+
+This also works with exact-index derivation:
+
+```bash
+cargo run --release -- \
+  --public-key "<96 hex chars>" \
+  --mode unhardened \
+  --derive-index 123456
+```
+
+`--public-key` is intentionally rejected for `--mode hardened` and `--mode both`.
+
 ### Useful options
 
 ```bash
 --mode hardened|unhardened|both
 --search-mode fast|lowest
 --derive-index 123456
+--public-key <96 hex chars>
 --threads 0
 --start-index 0
 --chunk-size 10000

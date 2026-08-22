@@ -27,6 +27,7 @@ export default function VanityApp() {
 
     const [workMode, setWorkMode] = useState<WorkMode>('search');
     const [mnemonic, setMnemonic] = useState('');
+    const [masterPublicKey, setMasterPublicKey] = useState('');
     const [wantedPrefix, setWantedPrefix] = useState('xch1ace');
     const [wantedSuffix, setWantedSuffix] = useState('');
     const [startIndex, setStartIndex] = useState(0);
@@ -119,19 +120,28 @@ export default function VanityApp() {
     const prefixValidationError = validateWantedPrefix(wantedPrefix);
     const suffixValidationError = validateWantedSuffix(wantedSuffix);
     const patternValidationError = validateWantedPatterns(wantedPrefix, wantedSuffix);
+    const publicKeyValidationError =
+        mode === 'unhardened' ? validateMasterPublicKey(masterPublicKey) : null;
+    const hasMnemonic = mnemonic.trim().length > 0;
+    const hasValidPublicKey =
+        masterPublicKey.trim().length > 0 && !publicKeyValidationError;
+    const hasRequiredKeyMaterial =
+        mode === 'unhardened' ? hasMnemonic || hasValidPublicKey : hasMnemonic;
 
     const canStart = useMemo(() => (
-        mnemonic.trim().length > 0 &&
+        hasRequiredKeyMaterial &&
         !patternValidationError &&
+        !publicKeyValidationError &&
         uiState === 'idle' &&
         !deriving
-    ), [deriving, mnemonic, patternValidationError, uiState]);
+    ), [deriving, hasRequiredKeyMaterial, patternValidationError, publicKeyValidationError, uiState]);
 
     const canDerive = useMemo(() => (
-        mnemonic.trim().length > 0 &&
+        hasRequiredKeyMaterial &&
+        !publicKeyValidationError &&
         uiState === 'idle' &&
         !deriving
-    ), [deriving, mnemonic, uiState]);
+    ), [deriving, hasRequiredKeyMaterial, publicKeyValidationError, uiState]);
 
     const canStop = uiState === 'running';
 
@@ -154,6 +164,7 @@ export default function VanityApp() {
 
         const req: StartSearchRequest = {
             mnemonic: mnemonic.trim(),
+            masterPublicKey: mode === 'unhardened' ? normalizePublicKeyInput(masterPublicKey) : '',
             wantedPrefix: wantedPrefix.trim(),
             wantedSuffix: wantedSuffix.trim(),
             startIndex: clampU32(startIndex),
@@ -197,6 +208,7 @@ export default function VanityApp() {
         try {
             const derived = await runtime.deriveAddresses({
                 mnemonic: mnemonic.trim(),
+                masterPublicKey: mode === 'unhardened' ? normalizePublicKeyInput(masterPublicKey) : '',
                 index: clampU32(deriveIndex),
                 mode,
                 addressPrefix: derivePrefix,
@@ -271,15 +283,39 @@ export default function VanityApp() {
                         </div>
 
                         <label style={styles.fieldFull}>
-                            <span style={styles.labelText}>Mnemonic</span>
+                            <span style={styles.labelText}>
+                                Mnemonic {mode === 'unhardened' ? 'or private key source' : 'required'}
+                            </span>
                             <textarea
                                 style={styles.textarea}
                                 rows={4}
                                 value={mnemonic}
                                 onChange={(e) => setMnemonic(e.target.value)}
-                                placeholder="word word word ..."
+                                placeholder={
+                                    mode === 'unhardened'
+                                        ? 'optional when using a master public key'
+                                        : 'word word word ...'
+                                }
                                 disabled={inputsDisabled}
                             />
+                        </label>
+
+                        <label style={{ ...styles.fieldFull, marginTop: 12 }}>
+                            <span style={styles.labelText}>
+                                Master public key {mode === 'unhardened' ? 'for unhardened mode' : 'unhardened only'}
+                            </span>
+                            <input
+                                style={{
+                                    ...styles.input,
+                                    ...(publicKeyValidationError ? styles.invalidInput : null),
+                                }}
+                                value={masterPublicKey}
+                                onChange={(e) => setMasterPublicKey(e.target.value)}
+                                placeholder="96 hex characters"
+                                aria-invalid={Boolean(publicKeyValidationError)}
+                                disabled={inputsDisabled}
+                            />
+                            <FieldError message={publicKeyValidationError} />
                         </label>
 
                         {workMode === 'search' ? (
@@ -369,6 +405,13 @@ export default function VanityApp() {
                                 {patternValidationError ? (
                                     <div style={styles.formError}>{patternValidationError}</div>
                                 ) : null}
+                                {!hasRequiredKeyMaterial ? (
+                                    <div style={styles.formError}>
+                                        {mode === 'unhardened'
+                                            ? 'Mnemonic or master public key is required.'
+                                            : 'Mnemonic is required for hardened mode.'}
+                                    </div>
+                                ) : null}
 
                                 <div style={styles.actions}>
                                     <button
@@ -443,6 +486,13 @@ export default function VanityApp() {
                                         Derive
                                     </button>
                                 </div>
+                                {!hasRequiredKeyMaterial ? (
+                                    <div style={styles.formError}>
+                                        {mode === 'unhardened'
+                                            ? 'Mnemonic or master public key is required.'
+                                            : 'Mnemonic is required for hardened mode.'}
+                                    </div>
+                                ) : null}
                             </div>
                         )}
                     </section>
@@ -582,6 +632,24 @@ function clampU32(value: number): number {
     }
 
     return Math.max(0, Math.min(MAX_INDEX, Math.floor(value)));
+}
+
+function normalizePublicKeyInput(value: string): string {
+    return value.trim().toLowerCase().replace(/^0x/, '');
+}
+
+function validateMasterPublicKey(value: string): string | null {
+    const normalized = normalizePublicKeyInput(value);
+
+    if (normalized.length === 0) {
+        return null;
+    }
+
+    if (!/^[0-9a-f]{96}$/.test(normalized)) {
+        return 'Master public key must be 96 hex characters.';
+    }
+
+    return null;
 }
 
 function formatNumber(value: number): string {

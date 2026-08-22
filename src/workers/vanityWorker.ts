@@ -6,18 +6,21 @@ import chiaWalletSdkWasmUrl from 'chia-wallet-sdk-wasm/chia_wallet_sdk_wasm_bg.w
 const {
     Address,
     Mnemonic,
+    PublicKey,
     SecretKey,
+    fromHex,
     standardPuzzleHash,
 } = chiaWalletSdk;
 
 type SecretKeyInstance = InstanceType<typeof chiaWalletSdk.SecretKey>;
-type PublicKeyInstance = ReturnType<SecretKeyInstance['publicKey']>;
+type PublicKeyInstance = InstanceType<typeof chiaWalletSdk.PublicKey>;
 
 type Mode = 'hardened' | 'unhardened' | 'both';
 type SearchMode = 'fast' | 'lowest';
 
 interface StartPayload {
     mnemonic: string;
+    masterPublicKey: string;
     wantedPrefix: string;
     wantedSuffix: string;
     startIndex: number;
@@ -31,6 +34,7 @@ interface StartPayload {
 
 interface DerivePayload {
     mnemonic: string;
+    masterPublicKey: string;
     index: number;
     mode: Mode;
     addressPrefix: 'xch' | 'txch';
@@ -94,15 +98,58 @@ function standardAddressForSk(secretKey: SecretKeyInstance, prefix: string): str
 }
 
 function deriveUnhardenedPkForIndex(
-    masterSk: SecretKeyInstance,
+    masterPk: PublicKeyInstance,
     index: number,
 ): PublicKeyInstance {
-    return masterSk.publicKey().deriveUnhardenedPath([
+    return masterPk.deriveUnhardenedPath([
         CHIA_PURPOSE,
         CHIA_COIN_TYPE,
         CHIA_ACCOUNT,
         index,
     ]);
+}
+
+function normalizePublicKeyHex(value: string): string {
+    return value.trim().toLowerCase().replace(/^0x/, '');
+}
+
+function publicKeyFromHex(value: string): PublicKeyInstance {
+    const normalized = normalizePublicKeyHex(value);
+
+    if (!/^[0-9a-f]{96}$/.test(normalized)) {
+        throw new Error('master public key must be 96 hex characters');
+    }
+
+    const publicKey = PublicKey.fromBytes(fromHex(normalized));
+
+    if (!publicKey.isValid() || publicKey.isInfinity()) {
+        throw new Error('master public key is invalid');
+    }
+
+    return publicKey;
+}
+
+function masterSecretKeyFromMnemonic(mnemonicPhrase: string): SecretKeyInstance {
+    const mnemonic = new Mnemonic(mnemonicPhrase);
+    const seed = mnemonic.toSeed('');
+    return SecretKey.fromSeed(seed);
+}
+
+function masterPublicKeyFromPayload(payload: {
+    mnemonic: string;
+    masterPublicKey: string;
+}): PublicKeyInstance {
+    const publicKeyHex = normalizePublicKeyHex(payload.masterPublicKey);
+
+    if (publicKeyHex.length > 0) {
+        return publicKeyFromHex(publicKeyHex);
+    }
+
+    if (payload.mnemonic.trim().length === 0) {
+        throw new Error('mnemonic or master public key is required for unhardened mode');
+    }
+
+    return masterSecretKeyFromMnemonic(payload.mnemonic).publicKey();
 }
 
 function deriveHardenedSkForIndex(
@@ -118,7 +165,10 @@ function deriveHardenedSkForIndex(
 }
 
 function deriveCandidatesForIndex(
-    masterSk: SecretKeyInstance,
+    root: {
+        masterSk: SecretKeyInstance | null;
+        masterPk: PublicKeyInstance | null;
+    },
     index: number,
     mode: Mode,
     prefix: string,
@@ -130,7 +180,13 @@ function deriveCandidatesForIndex(
     }> = [];
 
     if (mode === 'unhardened' || mode === 'both') {
-        const publicKey = deriveUnhardenedPkForIndex(masterSk, index);
+        const masterPk = root.masterPk ?? root.masterSk?.publicKey();
+
+        if (!masterPk) {
+            throw new Error('mnemonic or master public key is required for unhardened mode');
+        }
+
+        const publicKey = deriveUnhardenedPkForIndex(masterPk, index);
         out.push({
             index,
             mode: 'unhardened',
@@ -139,7 +195,11 @@ function deriveCandidatesForIndex(
     }
 
     if (mode === 'hardened' || mode === 'both') {
-        const secretKey = deriveHardenedSkForIndex(masterSk, index);
+        if (!root.masterSk) {
+            throw new Error('mnemonic is required for hardened mode');
+        }
+
+        const secretKey = deriveHardenedSkForIndex(root.masterSk, index);
         out.push({
             index,
             mode: 'hardened',
@@ -228,9 +288,15 @@ async function runSearch(payload: StartPayload) {
     const wantedSuffixLower = payload.wantedSuffix.toLowerCase();
     const prefix = wantedPrefixLower.startsWith('txch1') ? 'txch' : 'xch';
 
-    const mnemonic = new Mnemonic(payload.mnemonic);
-    const seed = mnemonic.toSeed('');
-    const masterSk = SecretKey.fromSeed(seed);
+    const root = payload.mode === 'unhardened'
+        ? {
+            masterSk: null,
+            masterPk: masterPublicKeyFromPayload(payload),
+        }
+        : {
+            masterSk: masterSecretKeyFromMnemonic(payload.mnemonic),
+            masterPk: null,
+        };
 
     let bestHit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null = null;
 
@@ -246,7 +312,7 @@ async function runSearch(payload: StartPayload) {
             return;
         }
 
-        const candidates = deriveCandidatesForIndex(masterSk, index, payload.mode, prefix);
+        const candidates = deriveCandidatesForIndex(root, index, payload.mode, prefix);
         checkedSinceLastReport += candidates.length;
 
         for (const candidate of candidates) {
@@ -275,12 +341,18 @@ async function runSearch(payload: StartPayload) {
 async function runDerive(payload: DerivePayload) {
     await ensureInit();
 
-    const mnemonic = new Mnemonic(payload.mnemonic);
-    const seed = mnemonic.toSeed('');
-    const masterSk = SecretKey.fromSeed(seed);
+    const root = payload.mode === 'unhardened'
+        ? {
+            masterSk: null,
+            masterPk: masterPublicKeyFromPayload(payload),
+        }
+        : {
+            masterSk: masterSecretKeyFromMnemonic(payload.mnemonic),
+            masterPk: null,
+        };
 
     const candidates = deriveCandidatesForIndex(
-        masterSk,
+        root,
         payload.index,
         payload.mode,
         payload.addressPrefix,

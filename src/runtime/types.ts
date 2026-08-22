@@ -16,6 +16,7 @@ export interface SearchHitPayload {
 
 export interface DeriveAddressRequest {
     mnemonic: string;
+    masterPublicKey: string;
     index: number;
     mode: Mode;
     addressPrefix: 'xch' | 'txch';
@@ -41,6 +42,7 @@ export interface SearchStatePayload {
 
 export interface StartSearchRequest {
     mnemonic: string;
+    masterPublicKey: string;
     wantedPrefix: string;
     wantedSuffix: string;
     startIndex: number;

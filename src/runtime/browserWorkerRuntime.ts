@@ -154,6 +154,30 @@ function normalChunkSize(requested: number): number {
     return Math.max(1, Math.floor(requested));
 }
 
+function normalizePublicKeyHex(value: string): string {
+    return value.trim().toLowerCase().replace(/^0x/, '');
+}
+
+function validateKeyMaterial(req: { mnemonic: string; masterPublicKey: string; mode: string }) {
+    const mnemonic = req.mnemonic.trim();
+    const masterPublicKey = normalizePublicKeyHex(req.masterPublicKey);
+
+    if (masterPublicKey && !/^[0-9a-f]{96}$/.test(masterPublicKey)) {
+        throw new Error('master public key must be 96 hex characters');
+    }
+
+    if (req.mode === 'unhardened') {
+        if (!mnemonic && !masterPublicKey) {
+            throw new Error('mnemonic or master public key is required for unhardened mode');
+        }
+        return;
+    }
+
+    if (!mnemonic) {
+        throw new Error('mnemonic is required for hardened mode');
+    }
+}
+
 function ensureCancelView() {
     if (typeof SharedArrayBuffer !== 'undefined') {
         const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
@@ -173,6 +197,7 @@ function postStartToWorker(
         type: 'start',
         payload: {
             mnemonic: req.mnemonic,
+            masterPublicKey: req.masterPublicKey,
             wantedPrefix: req.wantedPrefix,
             wantedSuffix: req.wantedSuffix,
             startIndex,
@@ -375,6 +400,8 @@ export const browserWorkerRuntime: VanityRuntime = {
             throw new Error(validationError);
         }
 
+        validateKeyMaterial(req);
+
         running = true;
         activeRunId += 1;
         resetRunState();
@@ -404,6 +431,7 @@ export const browserWorkerRuntime: VanityRuntime = {
     },
 
     async deriveAddresses(req: DeriveAddressRequest) {
+        validateKeyMaterial(req);
         return deriveInWorker(req);
     },
 

@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bip39::Mnemonic;
-use chia_bls::{master_to_wallet_hardened, master_to_wallet_unhardened, SecretKey};
+use chia_bls::{master_to_wallet_hardened, master_to_wallet_unhardened, PublicKey, SecretKey};
 use chia_puzzle_types::{standard::StandardArgs, DeriveSynthetic};
 use chia_sdk_types::Mod;
 use chia_sdk_utils::Address;
@@ -26,8 +26,12 @@ const CHIA_ADDRESS_PREFIXES: [&str; 2] = ["xch1", "txch1"];
     about = "Find Chia receive addresses matching a prefix and/or suffix."
 )]
 struct Cli {
-    /// The wallet mnemonic phrase.
-    mnemonic: String,
+    /// The wallet mnemonic phrase. Required for hardened mode; optional for unhardened when --public-key is used.
+    mnemonic: Option<String>,
+
+    /// Master public key hex for unhardened derivation without private key material.
+    #[arg(long)]
+    public_key: Option<String>,
 
     /// Wanted address prefix. Supports full Chia wrappers like xch1ace or txch1ace.
     #[arg(long, short = 'p')]
@@ -103,13 +107,19 @@ struct SearchConfig {
     chunk_size: u32,
 }
 
+#[derive(Clone, Debug)]
+enum WalletRoot {
+    Secret(SecretKey),
+    Public(PublicKey),
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let master_sk = Arc::new(master_sk_from_mnemonic(&cli.mnemonic)?);
+    let wallet_root = Arc::new(wallet_root_from_cli(&cli)?);
 
     if let Some(index) = cli.derive_index {
         let address_prefix = infer_address_prefix("", &cli.address_prefix)?;
-        print_derived_addresses(&master_sk, index, cli.mode, &address_prefix);
+        print_derived_addresses(&wallet_root, index, cli.mode, &address_prefix);
         return Ok(());
     }
 
@@ -123,8 +133,8 @@ fn main() -> Result<()> {
     );
 
     let hit = match cli.search_mode {
-        SearchMode::Fast => search_fast(master_sk, &config)?,
-        SearchMode::Lowest => search_lowest(master_sk, &config)?,
+        SearchMode::Fast => search_fast(wallet_root, &config)?,
+        SearchMode::Lowest => search_lowest(wallet_root, &config)?,
     };
 
     match hit {
@@ -142,7 +152,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn print_derived_addresses(wallet_root: &SecretKey, index: u32, mode: Mode, address_prefix: &str) {
+fn print_derived_addresses(wallet_root: &WalletRoot, index: u32, mode: Mode, address_prefix: &str) {
     println!("DERIVED ADDRESS");
     println!("index   : {index}");
 
@@ -212,7 +222,37 @@ fn master_sk_from_mnemonic(mnemonic_phrase: &str) -> Result<SecretKey> {
     Ok(SecretKey::from_seed(&seed))
 }
 
-fn search_fast(wallet_root: Arc<SecretKey>, config: &SearchConfig) -> Result<Option<SearchHit>> {
+fn wallet_root_from_cli(cli: &Cli) -> Result<WalletRoot> {
+    if let Some(public_key) = cli.public_key.as_deref() {
+        if cli.mode != Mode::Unhardened {
+            bail!("--public-key can only be used with --mode unhardened");
+        }
+
+        return Ok(WalletRoot::Public(master_public_key_from_hex(public_key)?));
+    }
+
+    let Some(mnemonic) = cli.mnemonic.as_deref() else {
+        if cli.mode == Mode::Unhardened {
+            bail!("mnemonic or --public-key is required for unhardened mode");
+        }
+
+        bail!("mnemonic is required for hardened mode");
+    };
+
+    Ok(WalletRoot::Secret(master_sk_from_mnemonic(mnemonic)?))
+}
+
+fn master_public_key_from_hex(public_key: &str) -> Result<PublicKey> {
+    let normalized = public_key.trim().trim_start_matches("0x");
+    let bytes = hex::decode(normalized).context("public key must be valid hex")?;
+    let bytes: [u8; 48] = bytes
+        .try_into()
+        .map_err(|_| anyhow!("public key must be 96 hex characters"))?;
+
+    PublicKey::from_bytes(&bytes).context("invalid public key")
+}
+
+fn search_fast(wallet_root: Arc<WalletRoot>, config: &SearchConfig) -> Result<Option<SearchHit>> {
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
     let mut handles = Vec::with_capacity(config.threads);
@@ -261,7 +301,7 @@ fn search_fast(wallet_root: Arc<SecretKey>, config: &SearchConfig) -> Result<Opt
     Ok(hit)
 }
 
-fn search_lowest(wallet_root: Arc<SecretKey>, config: &SearchConfig) -> Result<Option<SearchHit>> {
+fn search_lowest(wallet_root: Arc<WalletRoot>, config: &SearchConfig) -> Result<Option<SearchHit>> {
     let mut chunk_start = config.start_index;
 
     loop {
@@ -277,7 +317,7 @@ fn search_lowest(wallet_root: Arc<SecretKey>, config: &SearchConfig) -> Result<O
 }
 
 fn search_lowest_chunk(
-    wallet_root: Arc<SecretKey>,
+    wallet_root: Arc<WalletRoot>,
     config: &SearchConfig,
     chunk_start: u32,
     chunk_end: u32,
@@ -336,7 +376,7 @@ fn search_lowest_chunk(
 }
 
 fn find_hit_at_index(
-    wallet_root: &SecretKey,
+    wallet_root: &WalletRoot,
     index: u32,
     config: &SearchConfig,
 ) -> Option<SearchHit> {
@@ -356,18 +396,26 @@ fn find_hit_at_index(
 }
 
 fn address_for_child(
-    wallet_root: &SecretKey,
+    wallet_root: &WalletRoot,
     index: u32,
     mode: CandidateMode,
     address_prefix: &str,
 ) -> String {
     let synthetic_pk = match mode {
-        CandidateMode::Hardened => master_to_wallet_hardened(wallet_root, index)
-            .derive_synthetic()
-            .public_key(),
-        CandidateMode::Unhardened => {
-            master_to_wallet_unhardened(&wallet_root.public_key(), index).derive_synthetic()
-        }
+        CandidateMode::Hardened => match wallet_root {
+            WalletRoot::Secret(secret_key) => master_to_wallet_hardened(secret_key, index)
+                .derive_synthetic()
+                .public_key(),
+            WalletRoot::Public(_) => unreachable!("hardened derivation requires a secret key"),
+        },
+        CandidateMode::Unhardened => match wallet_root {
+            WalletRoot::Secret(secret_key) => {
+                master_to_wallet_unhardened(&secret_key.public_key(), index).derive_synthetic()
+            }
+            WalletRoot::Public(public_key) => {
+                master_to_wallet_unhardened(public_key, index).derive_synthetic()
+            }
+        },
     };
     let puzzle_hash = StandardArgs::new(synthetic_pk).curry_tree_hash().into();
 
@@ -535,10 +583,26 @@ mod tests {
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         )
         .unwrap();
+        let wallet_root = WalletRoot::Secret(master_sk);
 
         assert_eq!(
-            address_for_child(&master_sk, 0, CandidateMode::Unhardened, "xch"),
+            address_for_child(&wallet_root, 0, CandidateMode::Unhardened, "xch"),
             "xch10y5nzscm52tkudhr40qtxhypr9y9x670wlee4rveas4pttcwsj7q7psn9w"
+        );
+    }
+
+    #[test]
+    fn public_root_derives_same_unhardened_address() {
+        let master_sk = master_sk_from_mnemonic(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        )
+        .unwrap();
+        let secret_root = WalletRoot::Secret(master_sk.clone());
+        let public_root = WalletRoot::Public(master_sk.public_key());
+
+        assert_eq!(
+            address_for_child(&secret_root, 0, CandidateMode::Unhardened, "xch"),
+            address_for_child(&public_root, 0, CandidateMode::Unhardened, "xch"),
         );
     }
 }
