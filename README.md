@@ -1,4 +1,4 @@
-# Address Vanity
+# Vanity address
 
 A high-performance, multi-core brute forcer for generating Chia wallet receive addresses with a desired prefix, suffix, or both.
 

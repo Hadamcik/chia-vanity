@@ -454,7 +454,7 @@ export default function VanityApp() {
                     <div style={styles.brandBlock}>
                         <img style={styles.brandMark} src="/icon.svg" alt="" aria-hidden="true" />
                         <div style={styles.titleRow}>
-                            <h1 style={styles.title}>Address Vanity</h1>
+                            <h1 style={styles.title}>Vanity address</h1>
                             <span style={styles.titleDivider}>|</span>
                             <a
                                 style={styles.authorMark}

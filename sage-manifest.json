@@ -3,7 +3,7 @@
   "sageVersion": {
     "min": "1.0.0"
   },
-  "name": "Address Vanity",
+  "name": "Vanity address",
   "version": "0.1.0",
   "icon": "icon.png",
   "author": {
