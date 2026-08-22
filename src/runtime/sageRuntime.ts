@@ -5,20 +5,24 @@ export const sageRuntime = {
     ...browserWorkerRuntime,
 
     async getHostCapabilities() {
-        const host = getSageHost();
-        if (!host) {
+        try {
+            const host = getSageHost();
+            if (!host) {
+                return null;
+            }
+
+            const [permissions, storage] = await Promise.all([
+                host.getPermissions(),
+                host.getStorageInfo(),
+            ]);
+
+            return {
+                permissions,
+                storage,
+            };
+        } catch {
             return null;
         }
-
-        const [permissions, storage] = await Promise.all([
-            host.getPermissions(),
-            host.getStorageInfo(),
-        ]);
-
-        return {
-            permissions,
-            storage,
-        };
     },
 
     async resetAppStorage() {
@@ -50,12 +54,16 @@ export const sageRuntime = {
     },
 
     async getSageCapabilities() {
-        const host = getSageHost();
-        if (!host) {
+        try {
+            const host = getSageHost();
+            if (!host) {
+                return [];
+            }
+
+            return await host.getCapabilities();
+        } catch {
             return [];
         }
-
-        return await host.getCapabilities();
     },
 
     async onSageCapabilitiesChange(cb: (capabilities: string[]) => void) {

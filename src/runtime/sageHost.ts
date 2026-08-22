@@ -1,13 +1,13 @@
 import {
-    callSage,
-    initSageBridge,
-    isSageInjected,
-    onSageRuntimeEvent,
-    type SageAppInfo,
-    type SageBridgeCapability,
-    type SageKeyInfo,
-    type SageSecretKeyInfo,
-} from './sageBridge.ts';
+    getSageClient,
+    hasSageBridge,
+    isSageRuntimeAvailable,
+    type AppGetInfoResult,
+    type GrantedCapabilitiesChangeEvent,
+    type KeyInfo,
+    type SecretKeyInfo,
+    type UserBridgeCapability,
+} from 'sage-app-sdk';
 
 export interface SagePermissions {
     network: boolean;
@@ -22,31 +22,12 @@ export interface SageStorageInfo {
 export interface SageHostBridge {
     getPermissions(): Promise<SagePermissions>;
     getStorageInfo(): Promise<SageStorageInfo>;
-    getAppInfo(): Promise<SageAppInfo>;
-    getCapabilities(): Promise<SageBridgeCapability[]>;
-    onCapabilitiesChange(cb: (capabilities: SageBridgeCapability[]) => void): () => void;
-    requestCapabilityGrant(capability: SageBridgeCapability): Promise<boolean>;
-    getKey(): Promise<SageKeyInfo | null>;
-    getSecretKey(fingerprint: number): Promise<SageSecretKeyInfo | null>;
-}
-
-interface GetKeyResponse {
-    key: SageKeyInfo | null;
-}
-
-interface GetSecretKeyResponse {
-    secrets: SageSecretKeyInfo | null;
-}
-
-interface RequestCapabilityGrantResponse {
-    granted: boolean;
-    alreadyGranted?: boolean | null;
-}
-
-interface GrantedCapabilitiesChangeEvent {
-    removed: SageBridgeCapability[];
-    added: SageBridgeCapability[];
-    full: SageBridgeCapability[];
+    getAppInfo(): Promise<AppGetInfoResult>;
+    getCapabilities(): Promise<string[]>;
+    onCapabilitiesChange(cb: (capabilities: string[]) => void): () => void;
+    requestCapabilityGrant(capability: UserBridgeCapability): Promise<boolean>;
+    getKey(): Promise<KeyInfo | null>;
+    getSecretKey(fingerprint: number): Promise<SecretKeyInfo | null>;
 }
 
 async function currentStorageInfo(): Promise<SageStorageInfo> {
@@ -65,29 +46,28 @@ async function currentStorageInfo(): Promise<SageStorageInfo> {
     };
 }
 
-async function ensureCapability(capability: SageBridgeCapability): Promise<boolean> {
-    const capabilities = await callSage<SageBridgeCapability[]>('app.getCapabilities');
+async function ensureCapability(capability: UserBridgeCapability): Promise<boolean> {
+    const client = await getSageClient();
+    const capabilities = await client.app.getCapabilities();
 
     if (capabilities.includes(capability)) {
         return true;
     }
 
-    const response = await callSage<RequestCapabilityGrantResponse>(
-        'app.requestCapabilityGrant',
-        { capability },
-    );
+    const response = await client.app.requestCapabilityGrant({ capability });
 
     return response.granted || Boolean(response.alreadyGranted);
 }
 
 export function getSageHost(): SageHostBridge | null {
-    if (!initSageBridge()) {
+    if (!isInsideSage()) {
         return null;
     }
 
     return {
         async getPermissions() {
-            const capabilities = await callSage<SageBridgeCapability[]>('app.getCapabilities');
+            const client = await getSageClient();
+            const capabilities = await client.app.getCapabilities();
 
             return {
                 network: true,
@@ -100,18 +80,35 @@ export function getSageHost(): SageHostBridge | null {
         },
 
         async getAppInfo() {
-            return await callSage<SageAppInfo>('app.getInfo');
+            const client = await getSageClient();
+            return await client.app.getInfo();
         },
 
         async getCapabilities() {
-            return await callSage<SageBridgeCapability[]>('app.getCapabilities');
+            const client = await getSageClient();
+            return await client.app.getCapabilities();
         },
 
         onCapabilitiesChange(cb) {
-            return onSageRuntimeEvent<GrantedCapabilitiesChangeEvent>(
-                'grantedCapabilitiesChange',
-                (event) => cb(event.full),
-            );
+            let cancelled = false;
+            let unlisten: (() => void) | null = null;
+
+            void getSageClient()
+                .then((client) => {
+                    if (cancelled) {
+                        return;
+                    }
+
+                    unlisten = client.app.onGrantedCapabilitiesChange(
+                        (event: GrantedCapabilitiesChangeEvent) => cb(event.full),
+                    );
+                })
+                .catch(() => {});
+
+            return () => {
+                cancelled = true;
+                unlisten?.();
+            };
         },
 
         async requestCapabilityGrant(capability) {
@@ -124,7 +121,8 @@ export function getSageHost(): SageHostBridge | null {
                 return null;
             }
 
-            const response = await callSage<GetKeyResponse>('wallet.getKey', {
+            const client = await getSageClient();
+            const response = await client.wallet.getKey({
                 fingerprint: null,
             });
 
@@ -137,7 +135,8 @@ export function getSageHost(): SageHostBridge | null {
                 return null;
             }
 
-            const response = await callSage<GetSecretKeyResponse>('wallet.getSecretKey', {
+            const client = await getSageClient();
+            const response = await client.wallet.getSecretKey({
                 fingerprint,
             });
 
@@ -147,5 +146,5 @@ export function getSageHost(): SageHostBridge | null {
 }
 
 export function isInsideSage(): boolean {
-    return isSageInjected();
+    return isSageRuntimeAvailable() || hasSageBridge();
 }

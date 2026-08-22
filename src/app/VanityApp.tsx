@@ -68,6 +68,10 @@ export default function VanityApp() {
     const [allowUnsafeMnemonicPaste, setAllowUnsafeMnemonicPaste] = useState(false);
 
     useEffect(() => {
+        let cancelled = false;
+        let timeoutId: number | undefined;
+        let attempts = 0;
+
         const maybeLoadHostInfo = async () => {
             const candidate = runtime as {
                 getHostCapabilities?: () => Promise<null | {
@@ -77,18 +81,37 @@ export default function VanityApp() {
                 getSageCapabilities?: () => Promise<string[]>;
             };
 
+            attempts += 1;
+            let foundHost = false;
+
             if (typeof candidate.getHostCapabilities === 'function') {
                 const info = await candidate.getHostCapabilities();
-                setHostInfo(info);
+                if (!cancelled) {
+                    setHostInfo(info);
+                }
+                foundHost = info !== null;
             }
 
             if (typeof candidate.getSageCapabilities === 'function') {
                 const capabilities = await candidate.getSageCapabilities();
-                setSageCapabilities(capabilities);
+                if (!cancelled) {
+                    setSageCapabilities(capabilities);
+                }
+            }
+
+            if (!cancelled && !foundHost && attempts < 10) {
+                timeoutId = window.setTimeout(() => void maybeLoadHostInfo(), 250);
             }
         };
 
         void maybeLoadHostInfo();
+
+        return () => {
+            cancelled = true;
+            if (timeoutId !== undefined) {
+                window.clearTimeout(timeoutId);
+            }
+        };
     }, []);
 
     useEffect(() => {

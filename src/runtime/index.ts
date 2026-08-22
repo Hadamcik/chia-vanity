@@ -1,14 +1,12 @@
 import { browserWorkerRuntime } from './browserWorkerRuntime.ts';
 import { sageRuntime } from './sageRuntime.ts';
-import { tauriRuntime } from './tauriRuntime.ts';
-import { isInsideSage } from './sageHost.ts';
 
-function isInsideTauri(): boolean {
-    return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
-
-export const runtime = isInsideSage()
-    ? sageRuntime
-    : isInsideTauri()
-        ? tauriRuntime
-        : browserWorkerRuntime;
+export const runtime = {
+    ...browserWorkerRuntime,
+    getHostCapabilities: sageRuntime.getHostCapabilities,
+    resetAppStorage: sageRuntime.resetAppStorage,
+    getSageKeyMaterial: sageRuntime.getSageKeyMaterial,
+    getSageCapabilities: sageRuntime.getSageCapabilities,
+    onSageCapabilitiesChange: sageRuntime.onSageCapabilitiesChange,
+    getSageSecretKey: sageRuntime.getSageSecretKey,
+};
