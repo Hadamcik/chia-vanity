@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@sage-app/sdk':
-        specifier: file:../sage/packages/sage-app-sdk
-        version: file:../sage/packages/sage-app-sdk
       '@tauri-apps/api':
         specifier: ^2.10.3
         version: 2.11.0
@@ -26,6 +23,9 @@ importers:
       react-dom:
         specifier: ^19.2.6
         version: 19.2.6(react@19.2.6)
+      sage-app-sdk:
+        specifier: ^0.13.0
+        version: 0.13.0
     devDependencies:
       '@tauri-apps/cli':
         specifier: ^2.10.3
@@ -431,10 +431,6 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@sage-app/sdk@file:../sage/packages/sage-app-sdk':
-    resolution: {directory: ../sage/packages/sage-app-sdk, type: directory}
-    hasBin: true
-
   '@tauri-apps/api@2.11.0':
     resolution: {integrity: sha512-7CinYODhky9lmO23xHnUFv0Xt43fbtWMyxZcLcRBlFkcgXKuEirBvHpmtJ89YMhyeGcq20Wuc47Fa4XjyniywA==}
 
@@ -656,6 +652,10 @@ packages:
   rollup@4.60.3:
     resolution: {integrity: sha512-pAQK9HalE84QSm4Po3EmWIZPd3FnjkShVkiMlz1iligWYkWQ7wHYd1PF/T7QZ5TVSD6uSTon5gBVMSM4JfBV+A==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
+    hasBin: true
+
+  sage-app-sdk@0.13.0:
+    resolution: {integrity: sha512-VJRVQT+m8EloV91jmTC8NqBq6wZPFNCw5RoJw6jXLEw0cwSJ5VJERVa2BjV5/mA2IWN6MZMSuksJMopKt3jKrA==}
     hasBin: true
 
   scheduler@0.27.0:
@@ -1015,8 +1015,6 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.3':
     optional: true
 
-  '@sage-app/sdk@file:../sage/packages/sage-app-sdk': {}
-
   '@tauri-apps/api@2.11.0': {}
 
   '@tauri-apps/cli-darwin-arm64@2.11.1':
@@ -1242,6 +1240,8 @@ snapshots:
       '@rollup/rollup-win32-x64-gnu': 4.60.3
       '@rollup/rollup-win32-x64-msvc': 4.60.3
       fsevents: 2.3.3
+
+  sage-app-sdk@0.13.0: {}
 
   scheduler@0.27.0: {}
 

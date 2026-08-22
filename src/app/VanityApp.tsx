@@ -19,6 +19,13 @@ type AddressPrefix = 'xch' | 'txch';
 
 const MAX_INDEX = 0xffffffff;
 
+interface SageKeyMaterial {
+    fingerprint: number;
+    name: string;
+    publicKey: string;
+    hasSecrets: boolean;
+}
+
 export default function VanityApp() {
     const [hostInfo, setHostInfo] = useState<null | {
         permissions: { network: boolean; persistent_storage: boolean };
@@ -27,6 +34,7 @@ export default function VanityApp() {
 
     const [workMode, setWorkMode] = useState<WorkMode>('search');
     const [mnemonic, setMnemonic] = useState('');
+    const [masterSecretKey, setMasterSecretKey] = useState('');
     const [masterPublicKey, setMasterPublicKey] = useState('');
     const [wantedPrefix, setWantedPrefix] = useState('xch1ace');
     const [wantedSuffix, setWantedSuffix] = useState('');
@@ -47,6 +55,9 @@ export default function VanityApp() {
     const [resultLabel, setResultLabel] = useState('No result yet');
     const [error, setError] = useState('');
     const [status, setStatus] = useState('Idle');
+    const [sageKey, setSageKey] = useState<SageKeyMaterial | null>(null);
+    const [loadingSageKey, setLoadingSageKey] = useState(false);
+    const [loadingSageSecret, setLoadingSageSecret] = useState(false);
 
     useEffect(() => {
         const maybeLoadHostInfo = async () => {
@@ -123,10 +134,13 @@ export default function VanityApp() {
     const publicKeyValidationError =
         mode === 'unhardened' ? validateMasterPublicKey(masterPublicKey) : null;
     const hasMnemonic = mnemonic.trim().length > 0;
+    const hasSecretKey = masterSecretKey.trim().length > 0;
     const hasValidPublicKey =
         masterPublicKey.trim().length > 0 && !publicKeyValidationError;
     const hasRequiredKeyMaterial =
-        mode === 'unhardened' ? hasMnemonic || hasValidPublicKey : hasMnemonic;
+        mode === 'unhardened'
+            ? hasMnemonic || hasSecretKey || hasValidPublicKey
+            : hasMnemonic || hasSecretKey;
 
     const canStart = useMemo(() => (
         hasRequiredKeyMaterial &&
@@ -164,6 +178,7 @@ export default function VanityApp() {
 
         const req: StartSearchRequest = {
             mnemonic: mnemonic.trim(),
+            masterSecretKey: normalizeSecretKeyInput(masterSecretKey),
             masterPublicKey: mode === 'unhardened' ? normalizePublicKeyInput(masterPublicKey) : '',
             wantedPrefix: wantedPrefix.trim(),
             wantedSuffix: wantedSuffix.trim(),
@@ -208,6 +223,7 @@ export default function VanityApp() {
         try {
             const derived = await runtime.deriveAddresses({
                 mnemonic: mnemonic.trim(),
+                masterSecretKey: normalizeSecretKeyInput(masterSecretKey),
                 masterPublicKey: mode === 'unhardened' ? normalizePublicKeyInput(masterPublicKey) : '',
                 index: clampU32(deriveIndex),
                 mode,
@@ -233,6 +249,104 @@ export default function VanityApp() {
         } catch {
             setError('Clipboard is not available in this host.');
             setStatus('Copy failed');
+        }
+    }
+
+    async function handleLoadSageKey() {
+        const candidate = runtime as {
+            getSageKeyMaterial?: () => Promise<SageKeyMaterial | null>;
+        };
+
+        if (typeof candidate.getSageKeyMaterial !== 'function') {
+            setError('Sage bridge is not available.');
+            setStatus('Sage unavailable');
+            return;
+        }
+
+        setLoadingSageKey(true);
+        setError('');
+        setStatus('Loading Sage key');
+
+        try {
+            const key = await candidate.getSageKeyMaterial();
+            if (!key) {
+                setStatus('No Sage key');
+                return;
+            }
+
+            setSageKey(key);
+            setMasterPublicKey(normalizePublicKeyInput(key.publicKey));
+            setStatus('Sage public key loaded');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+            setStatus('Sage key failed');
+        } finally {
+            setLoadingSageKey(false);
+        }
+    }
+
+    async function handleLoadSageSecret() {
+        const candidate = runtime as {
+            getSageSecretKey?: (fingerprint: number) => Promise<{
+                mnemonic: string | null;
+                secretKey: string;
+            } | null>;
+        };
+
+        let activeKey = sageKey;
+
+        if (!activeKey) {
+            const keyCandidate = runtime as {
+                getSageKeyMaterial?: () => Promise<SageKeyMaterial | null>;
+            };
+
+            if (typeof keyCandidate.getSageKeyMaterial !== 'function') {
+                setError('Sage bridge is not available.');
+                setStatus('Sage unavailable');
+                return;
+            }
+
+            activeKey = await keyCandidate.getSageKeyMaterial();
+            if (activeKey) {
+                setSageKey(activeKey);
+                setMasterPublicKey(normalizePublicKeyInput(activeKey.publicKey));
+            }
+        }
+
+        if (!activeKey) {
+            setError('Load the Sage wallet key first.');
+            setStatus('Sage key needed');
+            return;
+        }
+
+        if (typeof candidate.getSageSecretKey !== 'function') {
+            setError('Sage secret-key bridge is not available.');
+            setStatus('Sage unavailable');
+            return;
+        }
+
+        setLoadingSageSecret(true);
+        setError('');
+        setStatus('Requesting Sage secret');
+
+        try {
+            const secret = await candidate.getSageSecretKey(activeKey.fingerprint);
+            if (!secret) {
+                setStatus('Secret not granted');
+                return;
+            }
+
+            if (secret.mnemonic) {
+                setMnemonic(secret.mnemonic);
+            }
+
+            setMasterSecretKey(normalizeSecretKeyInput(secret.secretKey));
+            setStatus(secret.mnemonic ? 'Sage mnemonic loaded' : 'Sage private key loaded');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+            setStatus('Sage secret failed');
+        } finally {
+            setLoadingSageSecret(false);
         }
     }
 
@@ -299,6 +413,36 @@ export default function VanityApp() {
                                 disabled={inputsDisabled}
                             />
                         </label>
+
+                        {hostInfo ? (
+                            <div style={styles.sageActions}>
+                                <button
+                                    style={{
+                                        ...styles.secondaryButton,
+                                        ...(loadingSageKey ? styles.disabledButton : null),
+                                    }}
+                                    onClick={handleLoadSageKey}
+                                    disabled={inputsDisabled || loadingSageKey}
+                                >
+                                    {loadingSageKey ? 'Loading key' : 'Load Sage key'}
+                                </button>
+                                <button
+                                    style={{
+                                        ...styles.secondaryButton,
+                                        ...(loadingSageSecret ? styles.disabledButton : null),
+                                    }}
+                                    onClick={handleLoadSageSecret}
+                                    disabled={inputsDisabled || loadingSageSecret}
+                                >
+                                    {loadingSageSecret ? 'Requesting' : 'Load Sage private key'}
+                                </button>
+                                {sageKey ? (
+                                    <div style={styles.sageKeyLabel}>
+                                        {sageKey.name} · {sageKey.fingerprint}
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
 
                         <label style={{ ...styles.fieldFull, marginTop: 12 }}>
                             <span style={styles.labelText}>
@@ -408,8 +552,8 @@ export default function VanityApp() {
                                 {!hasRequiredKeyMaterial ? (
                                     <div style={styles.formError}>
                                         {mode === 'unhardened'
-                                            ? 'Mnemonic or master public key is required.'
-                                            : 'Mnemonic is required for hardened mode.'}
+                                            ? 'Mnemonic, Sage private key, or master public key is required.'
+                                            : 'Mnemonic or Sage private key is required for hardened mode.'}
                                     </div>
                                 ) : null}
 
@@ -489,8 +633,8 @@ export default function VanityApp() {
                                 {!hasRequiredKeyMaterial ? (
                                     <div style={styles.formError}>
                                         {mode === 'unhardened'
-                                            ? 'Mnemonic or master public key is required.'
-                                            : 'Mnemonic is required for hardened mode.'}
+                                            ? 'Mnemonic, Sage private key, or master public key is required.'
+                                            : 'Mnemonic or Sage private key is required for hardened mode.'}
                                     </div>
                                 ) : null}
                             </div>
@@ -635,6 +779,10 @@ function clampU32(value: number): number {
 }
 
 function normalizePublicKeyInput(value: string): string {
+    return value.trim().toLowerCase().replace(/^0x/, '');
+}
+
+function normalizeSecretKeyInput(value: string): string {
     return value.trim().toLowerCase().replace(/^0x/, '');
 }
 
@@ -896,6 +1044,23 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: 'center',
         gap: 10,
         flexWrap: 'wrap',
+    },
+    sageActions: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+        marginTop: 12,
+        padding: 10,
+        borderRadius: 8,
+        border: '1px solid rgba(65, 214, 163, 0.16)',
+        background: 'rgba(65, 214, 163, 0.06)',
+    },
+    sageKeyLabel: {
+        color: '#93f1d3',
+        fontSize: 12,
+        fontWeight: 750,
+        overflowWrap: 'anywhere',
     },
     primaryButton: {
         height: 40,

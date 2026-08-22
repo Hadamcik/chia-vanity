@@ -20,6 +20,7 @@ type SearchMode = 'fast' | 'lowest';
 
 interface StartPayload {
     mnemonic: string;
+    masterSecretKey: string;
     masterPublicKey: string;
     wantedPrefix: string;
     wantedSuffix: string;
@@ -34,6 +35,7 @@ interface StartPayload {
 
 interface DerivePayload {
     mnemonic: string;
+    masterSecretKey: string;
     masterPublicKey: string;
     index: number;
     mode: Mode;
@@ -135,8 +137,36 @@ function masterSecretKeyFromMnemonic(mnemonicPhrase: string): SecretKeyInstance 
     return SecretKey.fromSeed(seed);
 }
 
+function masterSecretKeyFromHex(value: string): SecretKeyInstance {
+    const normalized = normalizePublicKeyHex(value);
+
+    if (!/^[0-9a-f]{64}$/.test(normalized)) {
+        throw new Error('master secret key must be 64 hex characters');
+    }
+
+    return SecretKey.fromBytes(fromHex(normalized));
+}
+
+function masterSecretKeyFromPayload(payload: {
+    mnemonic: string;
+    masterSecretKey: string;
+}): SecretKeyInstance {
+    const secretKeyHex = normalizePublicKeyHex(payload.masterSecretKey);
+
+    if (secretKeyHex.length > 0) {
+        return masterSecretKeyFromHex(secretKeyHex);
+    }
+
+    if (payload.mnemonic.trim().length === 0) {
+        throw new Error('mnemonic or master secret key is required for hardened mode');
+    }
+
+    return masterSecretKeyFromMnemonic(payload.mnemonic);
+}
+
 function masterPublicKeyFromPayload(payload: {
     mnemonic: string;
+    masterSecretKey: string;
     masterPublicKey: string;
 }): PublicKeyInstance {
     const publicKeyHex = normalizePublicKeyHex(payload.masterPublicKey);
@@ -145,8 +175,14 @@ function masterPublicKeyFromPayload(payload: {
         return publicKeyFromHex(publicKeyHex);
     }
 
+    const secretKeyHex = normalizePublicKeyHex(payload.masterSecretKey);
+
+    if (secretKeyHex.length > 0) {
+        return masterSecretKeyFromHex(secretKeyHex).publicKey();
+    }
+
     if (payload.mnemonic.trim().length === 0) {
-        throw new Error('mnemonic or master public key is required for unhardened mode');
+        throw new Error('mnemonic, master secret key, or master public key is required for unhardened mode');
     }
 
     return masterSecretKeyFromMnemonic(payload.mnemonic).publicKey();
@@ -294,7 +330,7 @@ async function runSearch(payload: StartPayload) {
             masterPk: masterPublicKeyFromPayload(payload),
         }
         : {
-            masterSk: masterSecretKeyFromMnemonic(payload.mnemonic),
+            masterSk: masterSecretKeyFromPayload(payload),
             masterPk: null,
         };
 
@@ -347,7 +383,7 @@ async function runDerive(payload: DerivePayload) {
             masterPk: masterPublicKeyFromPayload(payload),
         }
         : {
-            masterSk: masterSecretKeyFromMnemonic(payload.mnemonic),
+            masterSk: masterSecretKeyFromPayload(payload),
             masterPk: null,
         };
 

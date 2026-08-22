@@ -61,6 +61,19 @@ Valid characters (alphabetically sorted):
 cargo build --release
 ```
 
+### Sage app build
+
+The browser app is Sage Apps compatible and uses `sage-app-sdk` for manifest finalization:
+
+```bash
+pnpm install
+pnpm build
+```
+
+The build writes the Sage-ready app bundle to `dist/`, including `dist/sage-manifest.json`.
+
+Inside Sage, use **Load Sage key** to fill the current wallet master public key for public-key-only unhardened searches. Use **Load Sage private key** only when you need hardened derivation.
+
 ---
 
 ## ▶️ Usage

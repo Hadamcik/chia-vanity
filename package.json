@@ -11,12 +11,12 @@
     "tauri:dev": "pnpm build && tauri dev"
   },
   "dependencies": {
-    "@sage-app/sdk": "file:../sage/packages/sage-app-sdk",
     "@tauri-apps/api": "^2.10.3",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "chia-wallet-sdk-wasm": "file:vendor-pkg/chia-wallet-sdk-wasm",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "sage-app-sdk": "^0.13.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.3",

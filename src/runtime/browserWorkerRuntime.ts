@@ -158,23 +158,33 @@ function normalizePublicKeyHex(value: string): string {
     return value.trim().toLowerCase().replace(/^0x/, '');
 }
 
-function validateKeyMaterial(req: { mnemonic: string; masterPublicKey: string; mode: string }) {
+function validateKeyMaterial(req: {
+    mnemonic: string;
+    masterSecretKey: string;
+    masterPublicKey: string;
+    mode: string;
+}) {
     const mnemonic = req.mnemonic.trim();
+    const masterSecretKey = normalizePublicKeyHex(req.masterSecretKey);
     const masterPublicKey = normalizePublicKeyHex(req.masterPublicKey);
+
+    if (masterSecretKey && !/^[0-9a-f]{64}$/.test(masterSecretKey)) {
+        throw new Error('master secret key must be 64 hex characters');
+    }
 
     if (masterPublicKey && !/^[0-9a-f]{96}$/.test(masterPublicKey)) {
         throw new Error('master public key must be 96 hex characters');
     }
 
     if (req.mode === 'unhardened') {
-        if (!mnemonic && !masterPublicKey) {
-            throw new Error('mnemonic or master public key is required for unhardened mode');
+        if (!mnemonic && !masterSecretKey && !masterPublicKey) {
+            throw new Error('mnemonic, master secret key, or master public key is required for unhardened mode');
         }
         return;
     }
 
-    if (!mnemonic) {
-        throw new Error('mnemonic is required for hardened mode');
+    if (!mnemonic && !masterSecretKey) {
+        throw new Error('mnemonic or master secret key is required for hardened mode');
     }
 }
 
@@ -197,6 +207,7 @@ function postStartToWorker(
         type: 'start',
         payload: {
             mnemonic: req.mnemonic,
+            masterSecretKey: req.masterSecretKey,
             masterPublicKey: req.masterPublicKey,
             wantedPrefix: req.wantedPrefix,
             wantedSuffix: req.wantedSuffix,

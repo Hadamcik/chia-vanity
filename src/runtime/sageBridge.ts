@@ -1,86 +1,222 @@
-export interface SageBridgeRequest {
-    channel: 'sage-bridge';
-    id: string;
-    method: string;
-    params?: unknown;
+import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+
+export type SageBridgeCapability =
+    | 'app.get_info'
+    | 'app.get_capabilities'
+    | 'app.request_capability_grant'
+    | 'wallet.get_key'
+    | 'wallet.get_secret_key'
+    | 'environment.get_network'
+    | 'storage.persistent_webview';
+
+export interface SageRequestedPermissions {
+    capabilities: {
+        required: SageBridgeCapability[];
+        optional: SageBridgeCapability[];
+    };
+    network: unknown;
 }
 
-export interface SageBridgeSuccessResponse {
-    channel: 'sage-bridge';
+export interface SageAppInfo {
     id: string;
-    ok: true;
-    result: unknown;
+    name: string;
+    version: string;
+    requestedPermissions: SageRequestedPermissions;
+    capabilities: SageBridgeCapability[];
+    network: unknown[];
 }
 
-export interface SageBridgeErrorResponse {
-    channel: 'sage-bridge';
-    id: string;
-    ok: false;
-    error: {
+export interface SageKeyInfo {
+    name: string;
+    fingerprint: number;
+    public_key: string;
+    has_secrets: boolean;
+    network_id: string;
+}
+
+export interface SageSecretKeyInfo {
+    mnemonic: string | null;
+    secret_key: string;
+}
+
+interface SageInvokeResult {
+    kind: 'success' | 'error' | 'pending';
+    resultJson?: string;
+    error?: {
         code: string;
         message: string;
     };
 }
 
-export type SageBridgeResponse =
-    | SageBridgeSuccessResponse
-    | SageBridgeErrorResponse;
+interface SageBridgeResponse {
+    bridgeVersion: 'v1';
+    id: string;
+    ok: boolean;
+    result?: unknown;
+    resultJson?: string;
+    error?: {
+        code: string;
+        message: string;
+    };
+}
 
-function isBridgeResponse(value: unknown): value is SageBridgeResponse {
-    if (!value || typeof value !== 'object') {
-        return false;
+interface SageListenEvent<T = unknown> {
+    payload: T;
+}
+
+const SAGE_BRIDGE_VERSION = 'v1';
+const INVOKE_COMMAND = 'apps_invoke_bridge';
+const RESPONSE_EVENT = 'sage-bridge:response';
+const REQUEST_TIMEOUT_MS = 30000;
+
+let initialized = false;
+const pending = new Map<string, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+}>();
+
+function parseJsonOrNull(value: string | null | undefined): unknown {
+    if (value == null) {
+        return null;
     }
 
-    const maybe = value as Partial<SageBridgeResponse>;
-    return (
-        maybe.channel === 'sage-bridge' &&
-        typeof maybe.id === 'string' &&
-        typeof maybe.ok === 'boolean'
-    );
+    try {
+        return JSON.parse(value);
+    } catch {
+        return null;
+    }
+}
+
+function bridgeResponseResult(data: SageBridgeResponse): unknown {
+    if ('result' in data) {
+        return data.result;
+    }
+
+    return parseJsonOrNull(data.resultJson);
 }
 
 function makeId(): string {
     return `sage-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function settleResponse(data: SageBridgeResponse) {
+    if (!data || data.bridgeVersion !== SAGE_BRIDGE_VERSION) {
+        return;
+    }
+
+    const request = pending.get(data.id);
+    if (!request) {
+        return;
+    }
+
+    pending.delete(data.id);
+    window.clearTimeout(request.timeoutId);
+
+    if (data.ok) {
+        request.resolve(bridgeResponseResult(data));
+    } else {
+        request.reject(new Error(data.error?.message || 'Unknown Sage bridge error'));
+    }
+}
+
+function settleInvokeResult(id: string, result: SageInvokeResult): boolean {
+    if (result.kind === 'pending') {
+        return false;
+    }
+
+    settleResponse({
+        bridgeVersion: SAGE_BRIDGE_VERSION,
+        id,
+        ok: result.kind === 'success',
+        resultJson: result.resultJson,
+        error: result.error,
+    });
+
+    return true;
+}
+
+export function isSageInjected(): boolean {
+    return typeof window !== 'undefined' && (
+        Boolean((window as typeof window & { __SAGE__?: unknown }).__SAGE__) ||
+        Boolean((window as typeof window & { __SAGE_APP_INFO__?: unknown }).__SAGE_APP_INFO__)
+    );
+}
+
+export function initSageBridge(): boolean {
+    if (initialized) {
+        return true;
+    }
+
+    if (!isSageInjected()) {
+        return false;
+    }
+
+    try {
+        const webview = getCurrentWebview();
+        void webview.listen<SageBridgeResponse>(
+            RESPONSE_EVENT,
+            (event: SageListenEvent<SageBridgeResponse>) => {
+                settleResponse(event.payload);
+            },
+        );
+
+        initialized = true;
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export async function callSage<T = unknown>(
     method: string,
     params?: unknown,
 ): Promise<T> {
-    if (window.parent === window) {
-        throw new Error('Not running inside Sage host');
+    if (!initSageBridge()) {
+        throw new Error('Sage bridge is unavailable in this runtime.');
     }
 
     const id = makeId();
 
-    return new Promise<T>((resolve, reject) => {
-        const onMessage = (event: MessageEvent) => {
-            if (!isBridgeResponse(event.data)) {
+    return await new Promise<T>((resolve, reject) => {
+        const timeoutId = window.setTimeout(() => {
+            if (!pending.has(id)) {
                 return;
             }
 
-            if (event.data.id !== id) {
-                return;
+            pending.delete(id);
+            reject(new Error(`Sage bridge timeout for ${method}`));
+        }, REQUEST_TIMEOUT_MS);
+
+        pending.set(id, {
+            resolve: (value) => resolve(value as T),
+            reject,
+            timeoutId,
+        });
+
+        void (async () => {
+            try {
+                const result = await invoke<SageInvokeResult>(INVOKE_COMMAND, {
+                    request: {
+                        bridgeVersion: SAGE_BRIDGE_VERSION,
+                        id,
+                        method,
+                        paramsJson: params === undefined ? null : JSON.stringify(params),
+                    },
+                });
+
+                settleInvokeResult(id, result);
+            } catch (error) {
+                const request = pending.get(id);
+                if (!request) {
+                    return;
+                }
+
+                pending.delete(id);
+                window.clearTimeout(request.timeoutId);
+                request.reject(error instanceof Error ? error : new Error(String(error)));
             }
-
-            window.removeEventListener('message', onMessage);
-
-            if (event.data.ok) {
-                resolve(event.data.result as T);
-            } else {
-                reject(new Error(event.data.error.message));
-            }
-        };
-
-        window.addEventListener('message', onMessage);
-
-        const request: SageBridgeRequest = {
-            channel: 'sage-bridge',
-            id,
-            method,
-            params,
-        };
-
-        window.parent.postMessage(request, '*');
+        })();
     });
 }

@@ -13,8 +13,16 @@
       }
     },
     "capabilities": {
-      "required": [],
-      "optional": ["wallet.get_secret_key"]
+      "required": [
+        "app.get_info",
+        "app.get_capabilities",
+        "app.request_capability_grant"
+      ],
+      "optional": [
+        "wallet.get_key",
+        "wallet.get_secret_key",
+        "storage.persistent_webview"
+      ]
     }
   }
 }
