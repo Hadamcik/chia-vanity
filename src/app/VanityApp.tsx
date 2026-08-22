@@ -430,27 +430,28 @@ export default function VanityApp() {
                 <header style={styles.header}>
                     <div style={styles.brandBlock}>
                         <img style={styles.brandMark} src="/icon.svg" alt="" aria-hidden="true" />
-                        <div>
+                        <div style={styles.titleRow}>
                             <h1 style={styles.title}>Chia Vanity</h1>
+                            <span style={styles.titleDivider}>|</span>
+                            <a
+                                style={styles.authorMark}
+                                href="https://fancybudgie.com"
+                                target="_blank"
+                                rel="noreferrer"
+                                aria-label="by fancy budgie"
+                            >
+                                <img
+                                    style={styles.authorAvatar}
+                                    src="/fancy-budgie-avatar.png"
+                                    alt=""
+                                    aria-hidden="true"
+                                />
+                                <span>by fancy budgie</span>
+                            </a>
                         </div>
                     </div>
 
                     <div style={styles.headerMeta}>
-                        <a
-                            style={styles.authorMark}
-                            href="https://fancybudgie.com"
-                            target="_blank"
-                            rel="noreferrer"
-                            aria-label="by fancy budgie"
-                        >
-                            <img
-                                style={styles.authorAvatar}
-                                src="/fancy-budgie-avatar.png"
-                                alt=""
-                                aria-hidden="true"
-                            />
-                            <span>by fancy budgie</span>
-                        </a>
                         <div style={styles.statusPill}>
                             <span style={styles.statusDot} />
                             <span>{status}</span>
@@ -1036,6 +1037,19 @@ const styles: Record<string, React.CSSProperties> = {
         fontWeight: 760,
         letterSpacing: 0,
     },
+    titleRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        minWidth: 0,
+        flexWrap: 'wrap',
+    },
+    titleDivider: {
+        color: '#615c52',
+        fontSize: 18,
+        fontWeight: 700,
+        lineHeight: 1,
+    },
     headerMeta: {
         display: 'flex',
         alignItems: 'center',
@@ -1046,13 +1060,9 @@ const styles: Record<string, React.CSSProperties> = {
     authorMark: {
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 8,
-        minHeight: 34,
-        padding: '0 10px 0 5px',
-        borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.12)',
-        background: '#1b1b18',
-        color: '#d6cfbf',
+        gap: 7,
+        minHeight: 28,
+        color: '#bdb6a7',
         fontSize: 13,
         fontWeight: 700,
         whiteSpace: 'nowrap',
@@ -1065,7 +1075,7 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'block',
         objectFit: 'cover',
         imageRendering: 'pixelated',
-        boxShadow: '0 0 0 1px rgba(243, 240, 232, 0.18)',
+        boxShadow: '0 0 0 1px rgba(243, 240, 232, 0.2)',
     },
     subtleLine: {
         marginTop: 5,
