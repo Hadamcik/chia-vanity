@@ -5,6 +5,14 @@
   },
   "name": "Chia Vanity",
   "version": "0.1.0",
+  "icon": "fancy-fauna-pf.png",
+  "author": {
+    "name": "Jakub Hadamcik",
+    "avatar": "img/avatar.png"
+  },
+  "donation": {
+    "address": "xch10hwpheqwv4m4dzuqc5hp8se3p0chkrkvmtf8m6d830wfagg9p22sxd82v7"
+  },
   "permissions": {
     "network": {
       "whitelist": {
