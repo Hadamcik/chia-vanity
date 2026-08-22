@@ -436,7 +436,13 @@ export default function VanityApp() {
                     </div>
 
                     <div style={styles.headerMeta}>
-                        <div style={styles.authorMark} aria-label="by fancy budgie">
+                        <a
+                            style={styles.authorMark}
+                            href="https://fancybudgie.com"
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label="by fancy budgie"
+                        >
                             <img
                                 style={styles.authorAvatar}
                                 src="/fancy-budgie-avatar.png"
@@ -444,7 +450,7 @@ export default function VanityApp() {
                                 aria-hidden="true"
                             />
                             <span>by fancy budgie</span>
-                        </div>
+                        </a>
                         <div style={styles.statusPill}>
                             <span style={styles.statusDot} />
                             <span>{status}</span>
@@ -1050,6 +1056,7 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 13,
         fontWeight: 700,
         whiteSpace: 'nowrap',
+        textDecoration: 'none',
     },
     authorAvatar: {
         width: 24,
