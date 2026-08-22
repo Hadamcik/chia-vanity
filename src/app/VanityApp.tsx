@@ -435,9 +435,20 @@ export default function VanityApp() {
                         </div>
                     </div>
 
-                    <div style={styles.statusPill}>
-                        <span style={styles.statusDot} />
-                        <span>{status}</span>
+                    <div style={styles.headerMeta}>
+                        <div style={styles.authorMark} aria-label="by fancy budgie">
+                            <img
+                                style={styles.authorAvatar}
+                                src="/fancy-budgie-avatar.png"
+                                alt=""
+                                aria-hidden="true"
+                            />
+                            <span>by fancy budgie</span>
+                        </div>
+                        <div style={styles.statusPill}>
+                            <span style={styles.statusDot} />
+                            <span>{status}</span>
+                        </div>
                     </div>
                 </header>
 
@@ -1018,6 +1029,36 @@ const styles: Record<string, React.CSSProperties> = {
         lineHeight: 1,
         fontWeight: 760,
         letterSpacing: 0,
+    },
+    headerMeta: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+        justifyContent: 'flex-end',
+    },
+    authorMark: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        minHeight: 34,
+        padding: '0 10px 0 5px',
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.12)',
+        background: '#1b1b18',
+        color: '#d6cfbf',
+        fontSize: 13,
+        fontWeight: 700,
+        whiteSpace: 'nowrap',
+    },
+    authorAvatar: {
+        width: 24,
+        height: 24,
+        borderRadius: 6,
+        display: 'block',
+        objectFit: 'cover',
+        imageRendering: 'pixelated',
+        boxShadow: '0 0 0 1px rgba(243, 240, 232, 0.18)',
     },
     subtleLine: {
         marginTop: 5,
