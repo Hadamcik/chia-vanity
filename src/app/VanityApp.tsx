@@ -203,13 +203,19 @@ export default function VanityApp() {
         credentialKind === 'public'
             ? canUsePublicCredential && hasValidPublicKey
             : hasMnemonic || hasSecretKey;
-    const credentialReadyLabel = credentialKind === 'public'
-        ? 'Public key ready'
-        : hasSecretKey
-            ? 'Private key ready'
-            : hasMnemonic
-                ? 'Mnemonic ready'
-                : 'Choose a key source';
+    const credentialReadyLabel = hasRequiredKeyMaterial
+        ? credentialKind === 'public'
+            ? 'Public key ready'
+            : hasSecretKey
+                ? 'Private key ready'
+                : 'Mnemonic ready'
+        : credentialKind === 'public'
+            ? activeCredentialSource === 'sage'
+                ? 'Import a Sage public key'
+                : 'Paste a master public key'
+            : activeCredentialSource === 'sage'
+                ? 'Import a Sage private key'
+                : 'Paste a mnemonic';
 
     const canStart = useMemo(() => (
         hasRequiredKeyMaterial &&
@@ -452,45 +458,21 @@ export default function VanityApp() {
                     </div>
                 </header>
 
-                <section style={styles.topStrip}>
-                    <Metric label="Checked" value={checked.toLocaleString()} />
-                    <Metric label="Rate" value={`${formatNumber(ratePerSec)}/s`} />
-                    <Metric label="Elapsed" value={`${elapsedSecs.toFixed(1)} s`} />
-                    <Metric label="State" value={uiState} />
-                    {hostInfo ? (
-                        <Metric
-                            label="Host"
-                            value={hostInfo.permissions.persistent_storage ? 'persistent' : 'session'}
-                        />
-                    ) : null}
-                </section>
-
-                <div style={styles.layout}>
+                <div style={styles.flowStack}>
                     <section style={styles.panel}>
                         <div style={styles.panelHeader}>
                             <div>
-                                <h2 style={styles.sectionTitle}>Work</h2>
+                                <h2 style={styles.sectionTitle}>Generate from</h2>
+                                <div style={styles.subtleLine}>{credentialReadyLabel}</div>
                             </div>
-                            <SegmentedControl
-                                value={workMode}
-                                onChange={setWorkMode}
-                                disabled={inputsDisabled}
-                            />
+                            {isSage ? (
+                                <span style={styles.sageBadge}>Sage</span>
+                            ) : (
+                                <span style={styles.browserBadge}>Browser</span>
+                            )}
                         </div>
 
-                        <section style={styles.credentialPanel}>
-                            <div style={styles.credentialHeader}>
-                                <div>
-                                    <h3 style={styles.credentialTitle}>Key source</h3>
-                                    <div style={styles.subtleLine}>{credentialReadyLabel}</div>
-                                </div>
-                                {isSage ? (
-                                    <span style={styles.sageBadge}>Sage</span>
-                                ) : (
-                                    <span style={styles.browserBadge}>Browser</span>
-                                )}
-                            </div>
-
+                        <div style={styles.sourceLayout}>
                             <div style={styles.choiceGrid}>
                                 <button
                                     style={{
@@ -517,129 +499,163 @@ export default function VanityApp() {
                                 </button>
                             </div>
 
-                            {isSage ? (
-                                <div style={styles.sourceSwitch}>
-                                    <button
-                                        style={{
-                                            ...styles.sourceButton,
-                                            ...(activeCredentialSource === 'sage' ? styles.sourceButtonActive : null),
-                                        }}
-                                        onClick={() => setCredentialSource('sage')}
-                                        disabled={inputsDisabled}
-                                    >
-                                        Import from Sage
-                                    </button>
-                                    <button
-                                        style={{
-                                            ...styles.sourceButton,
-                                            ...(activeCredentialSource === 'manual' ? styles.sourceButtonActive : null),
-                                        }}
-                                        onClick={() => setCredentialSource('manual')}
-                                        disabled={inputsDisabled}
-                                    >
-                                        Paste manually
-                                    </button>
+                            <label style={styles.field}>
+                                <span style={styles.labelText}>Key mode</span>
+                                <select
+                                    style={styles.input}
+                                    value={mode}
+                                    onChange={(e) => setMode(e.target.value as Mode)}
+                                    disabled={inputsDisabled}
+                                >
+                                    <option value="unhardened">unhardened</option>
+                                    <option value="hardened">hardened</option>
+                                    <option value="both">both</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        {isSage ? (
+                            <div style={styles.sourceSwitch}>
+                                <button
+                                    style={{
+                                        ...styles.sourceButton,
+                                        ...(activeCredentialSource === 'sage' ? styles.sourceButtonActive : null),
+                                    }}
+                                    onClick={() => setCredentialSource('sage')}
+                                    disabled={inputsDisabled}
+                                >
+                                    Import from Sage
+                                </button>
+                                <button
+                                    style={{
+                                        ...styles.sourceButton,
+                                        ...(activeCredentialSource === 'manual' ? styles.sourceButtonActive : null),
+                                    }}
+                                    onClick={() => setCredentialSource('manual')}
+                                    disabled={inputsDisabled}
+                                >
+                                    Paste manually
+                                </button>
+                            </div>
+                        ) : null}
+
+                        {activeCredentialSource === 'sage' && credentialKind === 'public' ? (
+                            <div style={styles.sageActions}>
+                                <button
+                                    style={{
+                                        ...styles.secondaryButton,
+                                        ...(loadingSageKey ? styles.disabledButton : null),
+                                    }}
+                                    onClick={handleLoadSageKey}
+                                    disabled={inputsDisabled || loadingSageKey}
+                                >
+                                    {loadingSageKey
+                                        ? 'Importing'
+                                        : hasSageKeyPermission
+                                            ? 'Import public key'
+                                            : 'Grant and import public key'}
+                                </button>
+                                <PermissionPill granted={hasSageKeyPermission} label="wallet.get_key" />
+                                {sageKey ? (
+                                    <div style={styles.sageKeyLabel}>
+                                        {sageKey.name} · {sageKey.fingerprint}
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
+
+                        {activeCredentialSource === 'sage' && credentialKind === 'private' ? (
+                            <div style={styles.sageActions}>
+                                <button
+                                    style={{
+                                        ...styles.secondaryButton,
+                                        ...(loadingSageSecret ? styles.disabledButton : null),
+                                    }}
+                                    onClick={handleLoadSageSecret}
+                                    disabled={inputsDisabled || loadingSageSecret}
+                                >
+                                    {loadingSageSecret
+                                        ? 'Requesting'
+                                        : hasSageSecretPermission
+                                            ? 'Import private key'
+                                            : 'Grant and import private key'}
+                                </button>
+                                <PermissionPill granted={hasSageSecretPermission} label="wallet.get_secret_key" />
+                                {sageKey ? (
+                                    <div style={styles.sageKeyLabel}>
+                                        {sageKey.name} · {sageKey.fingerprint}
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
+
+                        {activeCredentialSource === 'manual' && credentialKind === 'public' ? (
+                            <label style={styles.fieldFull}>
+                                <span style={styles.labelText}>Master public key</span>
+                                <input
+                                    style={{
+                                        ...styles.input,
+                                        ...(publicKeyValidationError ? styles.invalidInput : null),
+                                    }}
+                                    value={masterPublicKey}
+                                    onChange={(e) => setMasterPublicKey(e.target.value)}
+                                    placeholder="96 hex characters"
+                                    aria-invalid={Boolean(publicKeyValidationError)}
+                                    disabled={inputsDisabled}
+                                />
+                                <FieldError message={publicKeyValidationError} />
+                            </label>
+                        ) : null}
+
+                        {activeCredentialSource === 'manual' && credentialKind === 'private' && !isSage && !allowUnsafeMnemonicPaste ? (
+                            <div style={styles.warningBox}>
+                                <strong>Mnemonic safety</strong>
+                                <span>
+                                    This app does not send your mnemonic anywhere, but pasting a mnemonic into websites is still risky. Other sites may be dishonest, and browser extensions can read page contents. Installing this app into Sage is safer because Sage provides stronger sandboxing and key access through permission prompts.
+                                </span>
+                                <button
+                                    style={styles.warningButton}
+                                    onClick={() => setAllowUnsafeMnemonicPaste(true)}
+                                    disabled={inputsDisabled}
+                                >
+                                    Allow mnemonic paste
+                                </button>
+                            </div>
+                        ) : null}
+
+                        {activeCredentialSource === 'manual' && credentialKind === 'private' && (isSage || allowUnsafeMnemonicPaste) ? (
+                            <label style={styles.fieldFull}>
+                                <span style={styles.labelText}>Mnemonic</span>
+                                <textarea
+                                    style={styles.textarea}
+                                    rows={4}
+                                    value={mnemonic}
+                                    onChange={(e) => setMnemonic(e.target.value)}
+                                    placeholder="word word word ..."
+                                    disabled={inputsDisabled}
+                                />
+                            </label>
+                        ) : null}
+                    </section>
+
+                    <section style={styles.panel}>
+                        <div style={styles.panelHeader}>
+                            <div>
+                                <h2 style={styles.sectionTitle}>
+                                    {workMode === 'search' ? 'Search settings' : 'Index settings'}
+                                </h2>
+                                <div style={styles.subtleLine}>
+                                    {workMode === 'search'
+                                        ? 'Choose what the address should match'
+                                        : 'Derive one address at a known index'}
                                 </div>
-                            ) : null}
-
-                            {activeCredentialSource === 'sage' && credentialKind === 'public' ? (
-                                <div style={styles.sageActions}>
-                                    <button
-                                        style={{
-                                            ...styles.secondaryButton,
-                                            ...(loadingSageKey ? styles.disabledButton : null),
-                                        }}
-                                        onClick={handleLoadSageKey}
-                                        disabled={inputsDisabled || loadingSageKey}
-                                    >
-                                        {loadingSageKey
-                                            ? 'Importing'
-                                            : hasSageKeyPermission
-                                                ? 'Import public key'
-                                                : 'Grant and import public key'}
-                                    </button>
-                                    <PermissionPill granted={hasSageKeyPermission} label="wallet.get_key" />
-                                    {sageKey ? (
-                                        <div style={styles.sageKeyLabel}>
-                                            {sageKey.name} · {sageKey.fingerprint}
-                                        </div>
-                                    ) : null}
-                                </div>
-                            ) : null}
-
-                            {activeCredentialSource === 'sage' && credentialKind === 'private' ? (
-                                <div style={styles.sageActions}>
-                                    <button
-                                        style={{
-                                            ...styles.secondaryButton,
-                                            ...(loadingSageSecret ? styles.disabledButton : null),
-                                        }}
-                                        onClick={handleLoadSageSecret}
-                                        disabled={inputsDisabled || loadingSageSecret}
-                                    >
-                                        {loadingSageSecret
-                                            ? 'Requesting'
-                                            : hasSageSecretPermission
-                                                ? 'Import private key'
-                                                : 'Grant and import private key'}
-                                    </button>
-                                    <PermissionPill granted={hasSageSecretPermission} label="wallet.get_secret_key" />
-                                    {sageKey ? (
-                                        <div style={styles.sageKeyLabel}>
-                                            {sageKey.name} · {sageKey.fingerprint}
-                                        </div>
-                                    ) : null}
-                                </div>
-                            ) : null}
-
-                            {activeCredentialSource === 'manual' && credentialKind === 'public' ? (
-                                <label style={styles.fieldFull}>
-                                    <span style={styles.labelText}>Master public key</span>
-                                    <input
-                                        style={{
-                                            ...styles.input,
-                                            ...(publicKeyValidationError ? styles.invalidInput : null),
-                                        }}
-                                        value={masterPublicKey}
-                                        onChange={(e) => setMasterPublicKey(e.target.value)}
-                                        placeholder="96 hex characters"
-                                        aria-invalid={Boolean(publicKeyValidationError)}
-                                        disabled={inputsDisabled}
-                                    />
-                                    <FieldError message={publicKeyValidationError} />
-                                </label>
-                            ) : null}
-
-                            {activeCredentialSource === 'manual' && credentialKind === 'private' && !isSage && !allowUnsafeMnemonicPaste ? (
-                                <div style={styles.warningBox}>
-                                    <strong>Mnemonic safety</strong>
-                                    <span>
-                                        This app does not send your mnemonic anywhere, but pasting a mnemonic into websites is still risky. Other sites may be dishonest, and browser extensions can read page contents. Installing this app into Sage is safer because Sage provides stronger sandboxing and key access through permission prompts.
-                                    </span>
-                                    <button
-                                        style={styles.warningButton}
-                                        onClick={() => setAllowUnsafeMnemonicPaste(true)}
-                                        disabled={inputsDisabled}
-                                    >
-                                        Allow mnemonic paste
-                                    </button>
-                                </div>
-                            ) : null}
-
-                            {activeCredentialSource === 'manual' && credentialKind === 'private' && (isSage || allowUnsafeMnemonicPaste) ? (
-                                <label style={styles.fieldFull}>
-                                    <span style={styles.labelText}>Mnemonic</span>
-                                    <textarea
-                                        style={styles.textarea}
-                                        rows={4}
-                                        value={mnemonic}
-                                        onChange={(e) => setMnemonic(e.target.value)}
-                                        placeholder="word word word ..."
-                                        disabled={inputsDisabled}
-                                    />
-                                </label>
-                            ) : null}
-                        </section>
+                            </div>
+                            <SegmentedControl
+                                value={workMode}
+                                onChange={setWorkMode}
+                                disabled={inputsDisabled}
+                            />
+                        </div>
 
                         {workMode === 'search' ? (
                             <div style={styles.formStack}>
@@ -674,20 +690,6 @@ export default function VanityApp() {
                                             disabled={inputsDisabled}
                                         />
                                         <FieldError message={suffixValidationError} />
-                                    </label>
-
-                                    <label style={styles.field}>
-                                        <span style={styles.labelText}>Mode</span>
-                                        <select
-                                            style={styles.input}
-                                            value={mode}
-                                            onChange={(e) => setMode(e.target.value as Mode)}
-                                            disabled={inputsDisabled}
-                                        >
-                                            <option value="unhardened">unhardened</option>
-                                            <option value="hardened">hardened</option>
-                                            <option value="both">both</option>
-                                        </select>
                                     </label>
 
                                     <label style={styles.field}>
@@ -783,19 +785,6 @@ export default function VanityApp() {
                                         </select>
                                     </label>
 
-                                    <label style={styles.field}>
-                                        <span style={styles.labelText}>Mode</span>
-                                        <select
-                                            style={styles.input}
-                                            value={mode}
-                                            onChange={(e) => setMode(e.target.value as Mode)}
-                                            disabled={inputsDisabled}
-                                        >
-                                            <option value="unhardened">unhardened</option>
-                                            <option value="hardened">hardened</option>
-                                            <option value="both">both</option>
-                                        </select>
-                                    </label>
                                 </div>
 
                                 <div style={styles.actions}>
@@ -822,35 +811,54 @@ export default function VanityApp() {
                         )}
                     </section>
 
-                    <aside style={styles.panel}>
-                        <div style={styles.panelHeader}>
-                            <div>
-                                <h2 style={styles.sectionTitle}>Result</h2>
-                                <div style={styles.subtleLine}>{resultLabel}</div>
+                    <div style={styles.outputGrid}>
+                        <section style={styles.panel}>
+                            <div style={styles.panelHeader}>
+                                <div>
+                                    <h2 style={styles.sectionTitle}>Progress</h2>
+                                    <div style={styles.subtleLine}>{status}</div>
+                                </div>
                             </div>
-                        </div>
 
-                        {results.length > 0 ? (
-                            <div style={styles.resultList}>
-                                {results.map((item) => (
-                                    <ResultRow
-                                        key={`${item.mode}-${item.index}-${item.address}`}
-                                        item={item}
-                                        onCopy={copyAddress}
-                                    />
-                                ))}
+                            <div style={styles.metricGrid}>
+                                <Metric label="Checked" value={checked.toLocaleString()} />
+                                <Metric label="Rate" value={`${formatNumber(ratePerSec)}/s`} />
+                                <Metric label="Elapsed" value={`${elapsedSecs.toFixed(1)} s`} />
+                                <Metric label="State" value={uiState} />
+                                <Metric label="Host" value={isSage ? 'Sage' : 'Browser'} />
                             </div>
-                        ) : (
-                            <div style={styles.emptyState}>Waiting for output</div>
-                        )}
+                        </section>
 
-                        {error ? (
-                            <div style={styles.errorBox}>
-                                <strong>Error</strong>
-                                <span>{error}</span>
+                        <aside style={styles.panel}>
+                            <div style={styles.panelHeader}>
+                                <div>
+                                    <h2 style={styles.sectionTitle}>Result</h2>
+                                    <div style={styles.subtleLine}>{resultLabel}</div>
+                                </div>
                             </div>
-                        ) : null}
-                    </aside>
+
+                            {results.length > 0 ? (
+                                <div style={styles.resultList}>
+                                    {results.map((item) => (
+                                        <ResultRow
+                                            key={`${item.mode}-${item.index}-${item.address}`}
+                                            item={item}
+                                            onCopy={copyAddress}
+                                        />
+                                    ))}
+                                </div>
+                            ) : (
+                                <div style={styles.emptyState}>Waiting for output</div>
+                            )}
+
+                            {error ? (
+                                <div style={styles.errorBox}>
+                                    <strong>Error</strong>
+                                    <span>{error}</span>
+                                </div>
+                            ) : null}
+                        </aside>
+                    </div>
                 </div>
             </div>
         </main>
@@ -1088,7 +1096,6 @@ const styles: Record<string, React.CSSProperties> = {
         color: '#a7a194',
         fontSize: 12,
         lineHeight: 1.35,
-        textTransform: 'capitalize',
     },
     statusPill: {
         display: 'inline-flex',
@@ -1110,7 +1117,17 @@ const styles: Record<string, React.CSSProperties> = {
         background: '#41d6a3',
         boxShadow: '0 0 0 3px rgba(65, 214, 163, 0.14)',
     },
-    topStrip: {
+    flowStack: {
+        display: 'grid',
+        gap: 16,
+    },
+    outputGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
+        gap: 16,
+        alignItems: 'start',
+    },
+    metricGrid: {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
         gap: 1,
@@ -1118,7 +1135,6 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: 8,
         border: '1px solid rgba(243, 240, 232, 0.1)',
         background: 'rgba(243, 240, 232, 0.1)',
-        marginBottom: 16,
     },
     metric: {
         display: 'grid',
@@ -1199,6 +1215,14 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'grid',
         gap: 7,
         minWidth: 0,
+        marginTop: 12,
+    },
+    sourceLayout: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))',
+        gap: 12,
+        alignItems: 'end',
+        marginBottom: 12,
     },
     credentialPanel: {
         display: 'grid',
@@ -1260,6 +1284,7 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: 8,
         background: '#10100e',
         border: '1px solid rgba(243, 240, 232, 0.1)',
+        marginBottom: 12,
     },
     sourceButton: {
         height: 32,
@@ -1303,7 +1328,6 @@ const styles: Record<string, React.CSSProperties> = {
     formStack: {
         display: 'grid',
         gap: 14,
-        marginTop: 14,
     },
     formGrid: {
         display: 'grid',
