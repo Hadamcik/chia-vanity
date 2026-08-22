@@ -20,8 +20,7 @@
       ],
       "optional": [
         "wallet.get_key",
-        "wallet.get_secret_key",
-        "storage.persistent_webview"
+        "wallet.get_secret_key"
       ]
     }
   }
