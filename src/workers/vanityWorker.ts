@@ -21,6 +21,7 @@ interface StartPayload {
     wantedPrefix: string;
     wantedSuffix: string;
     startIndex: number;
+    endIndex: number | null;
     step: number;
     mode: Mode;
     searchMode: SearchMode;
@@ -28,8 +29,16 @@ interface StartPayload {
     cancelBuffer: SharedArrayBuffer | null;
 }
 
+interface DerivePayload {
+    mnemonic: string;
+    index: number;
+    mode: Mode;
+    addressPrefix: 'xch' | 'txch';
+}
+
 type WorkerMessage =
     | { type: 'start'; payload: StartPayload }
+    | { type: 'derive'; payload: DerivePayload }
     | { type: 'stop' };
 
 type WorkerResponse =
@@ -38,7 +47,14 @@ type WorkerResponse =
     type: 'hit';
     payload: { index: number; mode: 'hardened' | 'unhardened'; address: string };
 }
-    | { type: 'done' }
+    | {
+    type: 'derived';
+    payload: Array<{ index: number; mode: 'hardened' | 'unhardened'; address: string }>;
+}
+    | {
+    type: 'done';
+    payload: { hit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null };
+}
     | { type: 'stopped' }
     | { type: 'error'; payload: { message: string } };
 
@@ -218,7 +234,9 @@ async function runSearch(payload: StartPayload) {
 
     let bestHit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null = null;
 
-    for (let index = payload.startIndex; index <= 0xffffffff; index += payload.step) {
+    const endIndex = payload.endIndex ?? 0xffffffff;
+
+    for (let index = payload.startIndex; index <= endIndex; index += payload.step) {
         if (
             shouldStop ||
             (cancelView !== null && Atomics.load(cancelView, 0) === 1)
@@ -248,16 +266,27 @@ async function runSearch(payload: StartPayload) {
         }
 
         flushProgress();
-
-        if (payload.searchMode === 'lowest' && bestHit) {
-            flushProgress(true);
-            postMessage({ type: 'hit', payload: bestHit } satisfies WorkerResponse);
-            return;
-        }
     }
 
     flushProgress(true);
-    postMessage({ type: 'done' } satisfies WorkerResponse);
+    postMessage({ type: 'done', payload: { hit: bestHit } } satisfies WorkerResponse);
+}
+
+async function runDerive(payload: DerivePayload) {
+    await ensureInit();
+
+    const mnemonic = new Mnemonic(payload.mnemonic);
+    const seed = mnemonic.toSeed('');
+    const masterSk = SecretKey.fromSeed(seed);
+
+    const candidates = deriveCandidatesForIndex(
+        masterSk,
+        payload.index,
+        payload.mode,
+        payload.addressPrefix,
+    );
+
+    postMessage({ type: 'derived', payload: candidates } satisfies WorkerResponse);
 }
 
 self.onmessage = (event: MessageEvent<WorkerMessage>) => {
@@ -272,6 +301,19 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
         shouldStop = false;
 
         void runSearch(msg.payload).catch((error: unknown) => {
+            postMessage({
+                type: 'error',
+                payload: {
+                    message: error instanceof Error ? error.message : String(error),
+                },
+            } satisfies WorkerResponse);
+        });
+    }
+
+    if (msg.type === 'derive') {
+        shouldStop = false;
+
+        void runDerive(msg.payload).catch((error: unknown) => {
             postMessage({
                 type: 'error',
                 payload: {

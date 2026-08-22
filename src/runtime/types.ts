@@ -14,6 +14,19 @@ export interface SearchHitPayload {
     address: string;
 }
 
+export interface DeriveAddressRequest {
+    mnemonic: string;
+    index: number;
+    mode: Mode;
+    addressPrefix: 'xch' | 'txch';
+}
+
+export interface DeriveAddressPayload {
+    index: number;
+    mode: 'hardened' | 'unhardened';
+    address: string;
+}
+
 export interface SearchCompletedPayload {
     hit: SearchHitPayload | null;
 }
@@ -40,6 +53,7 @@ export interface StartSearchRequest {
 export interface VanityRuntime {
     startSearch(req: StartSearchRequest): Promise<void>;
     stopSearch(): Promise<void>;
+    deriveAddresses(req: DeriveAddressRequest): Promise<DeriveAddressPayload[]>;
     getSearchState(): Promise<SearchStatePayload>;
     onSearchProgress(cb: (payload: SearchProgressPayload) => void): Promise<() => void>;
     onSearchCompleted(cb: (payload: SearchCompletedPayload) => void): Promise<() => void>;

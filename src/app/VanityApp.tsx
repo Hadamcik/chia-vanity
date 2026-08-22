@@ -1,31 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { runtime } from '../runtime';
+import type {
+    DeriveAddressPayload,
+    Mode,
+    SearchHitPayload,
+    SearchMode,
+    StartSearchRequest,
+    UiState,
+} from '../runtime/types';
 import {
     validateWantedPatterns,
     validateWantedPrefix,
     validateWantedSuffix,
 } from '../lib/vanityValidation';
 
-type Mode = 'hardened' | 'unhardened' | 'both';
-type SearchMode = 'fast' | 'lowest';
-type UiState = 'idle' | 'running' | 'stopping';
+type WorkMode = 'search' | 'derive';
+type AddressPrefix = 'xch' | 'txch';
 
-interface SearchHitPayload {
-    index: number;
-    mode: string;
-    address: string;
-}
-
-interface StartSearchRequest {
-    mnemonic: string;
-    wantedPrefix: string;
-    wantedSuffix: string;
-    startIndex: number;
-    chunkSize: number;
-    mode: Mode;
-    workerCount: number;
-    searchMode: SearchMode;
-}
+const MAX_INDEX = 0xffffffff;
 
 export default function VanityApp() {
     const [hostInfo, setHostInfo] = useState<null | {
@@ -33,6 +25,7 @@ export default function VanityApp() {
         storage: { bytesUsed: number; quotaBytes: number | null };
     }>(null);
 
+    const [workMode, setWorkMode] = useState<WorkMode>('search');
     const [mnemonic, setMnemonic] = useState('');
     const [wantedPrefix, setWantedPrefix] = useState('xch1ace');
     const [wantedSuffix, setWantedSuffix] = useState('');
@@ -41,12 +34,16 @@ export default function VanityApp() {
     const [mode, setMode] = useState<Mode>('unhardened');
     const [workerCount, setWorkerCount] = useState(0);
     const [searchMode, setSearchMode] = useState<SearchMode>('fast');
+    const [deriveIndex, setDeriveIndex] = useState(0);
+    const [derivePrefix, setDerivePrefix] = useState<AddressPrefix>('xch');
+    const [deriving, setDeriving] = useState(false);
 
     const [uiState, setUiState] = useState<UiState>('idle');
     const [checked, setChecked] = useState(0);
     const [ratePerSec, setRatePerSec] = useState(0);
     const [elapsedSecs, setElapsedSecs] = useState(0);
-    const [hit, setHit] = useState<SearchHitPayload | null>(null);
+    const [results, setResults] = useState<Array<SearchHitPayload | DeriveAddressPayload>>([]);
+    const [resultLabel, setResultLabel] = useState('No result yet');
     const [error, setError] = useState('');
     const [status, setStatus] = useState('Idle');
 
@@ -79,12 +76,13 @@ export default function VanityApp() {
                 setChecked(event.checked);
                 setRatePerSec(event.ratePerSec);
                 setElapsedSecs(event.elapsedSecs);
-                setStatus('Searching...');
+                setStatus('Searching');
                 setUiState((prev) => (prev === 'stopping' ? prev : 'running'));
             });
 
             unlistenCompleted = await runtime.onSearchCompleted((event) => {
-                setHit(event.hit);
+                setResults(event.hit ? [event.hit] : []);
+                setResultLabel(event.hit ? 'Search match' : 'No match found');
                 setStatus(event.hit ? 'Match found' : 'No match found');
                 setUiState('idle');
             });
@@ -117,23 +115,23 @@ export default function VanityApp() {
         };
     }, []);
 
-    const inputsDisabled = uiState !== 'idle';
+    const inputsDisabled = uiState !== 'idle' || deriving;
     const prefixValidationError = validateWantedPrefix(wantedPrefix);
     const suffixValidationError = validateWantedSuffix(wantedSuffix);
     const patternValidationError = validateWantedPatterns(wantedPrefix, wantedSuffix);
 
-    const canStart = useMemo(() => {
-        const hasWantedPattern =
-            wantedPrefix.trim().length > 0 || wantedSuffix.trim().length > 0;
+    const canStart = useMemo(() => (
+        mnemonic.trim().length > 0 &&
+        !patternValidationError &&
+        uiState === 'idle' &&
+        !deriving
+    ), [deriving, mnemonic, patternValidationError, uiState]);
 
-        return (
-            mnemonic.trim().length > 0 &&
-            hasWantedPattern &&
-            !prefixValidationError &&
-            !suffixValidationError &&
-            uiState === 'idle'
-        );
-    }, [mnemonic, prefixValidationError, suffixValidationError, wantedPrefix, wantedSuffix, uiState]);
+    const canDerive = useMemo(() => (
+        mnemonic.trim().length > 0 &&
+        uiState === 'idle' &&
+        !deriving
+    ), [deriving, mnemonic, uiState]);
 
     const canStop = uiState === 'running';
 
@@ -144,22 +142,24 @@ export default function VanityApp() {
             return;
         }
 
+        setWorkMode('search');
         setError('');
-        setHit(null);
+        setResults([]);
+        setResultLabel('Search running');
         setChecked(0);
         setRatePerSec(0);
         setElapsedSecs(0);
-        setStatus('Starting...');
+        setStatus('Starting');
         setUiState('running');
 
         const req: StartSearchRequest = {
             mnemonic: mnemonic.trim(),
             wantedPrefix: wantedPrefix.trim(),
             wantedSuffix: wantedSuffix.trim(),
-            startIndex,
-            chunkSize,
+            startIndex: clampU32(startIndex),
+            chunkSize: Math.max(1, Math.floor(chunkSize) || 10000),
             mode,
-            workerCount,
+            workerCount: Math.max(0, Math.floor(workerCount) || 0),
             searchMode,
         };
 
@@ -176,7 +176,7 @@ export default function VanityApp() {
     async function handleStop() {
         try {
             setUiState('stopping');
-            setStatus('Stopping...');
+            setStatus('Stopping');
             await runtime.stopSearch();
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -186,531 +186,732 @@ export default function VanityApp() {
         }
     }
 
+    async function handleDerive() {
+        setWorkMode('derive');
+        setError('');
+        setResults([]);
+        setResultLabel('Deriving');
+        setStatus('Deriving');
+        setDeriving(true);
+
+        try {
+            const derived = await runtime.deriveAddresses({
+                mnemonic: mnemonic.trim(),
+                index: clampU32(deriveIndex),
+                mode,
+                addressPrefix: derivePrefix,
+            });
+            setResults(derived);
+            setResultLabel('Derived address');
+            setStatus('Derived');
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            setResultLabel('No result yet');
+            setStatus('Derive failed');
+        } finally {
+            setDeriving(false);
+        }
+    }
+
+    async function copyAddress(address: string) {
+        try {
+            await navigator.clipboard.writeText(address);
+            setStatus('Address copied');
+        } catch {
+            setError('Clipboard is not available in this host.');
+            setStatus('Copy failed');
+        }
+    }
+
     return (
         <main style={styles.page}>
             <div style={styles.shell}>
                 <header style={styles.header}>
-                    <div>
-                        <h1 style={styles.title}>Chia Vanity</h1>
-                        <p style={styles.subtitle}>
-                            Brute-force receive address prefixes and suffixes by derivation index.
-                        </p>
+                    <div style={styles.brandBlock}>
+                        <div style={styles.brandMark}>CV</div>
+                        <div>
+                            <h1 style={styles.title}>Chia Vanity</h1>
+                            <div style={styles.subtleLine}>
+                                {workerCount > 0 ? `${workerCount} workers` : 'auto workers'} · {mode}
+                            </div>
+                        </div>
                     </div>
 
-                    <div style={styles.headerStatus}>
-                        <div style={styles.statusLabel}>State</div>
-                        <div style={styles.statusValue}>{uiState}</div>
+                    <div style={styles.statusPill}>
+                        <span style={styles.statusDot} />
+                        <span>{status}</span>
                     </div>
                 </header>
 
-                {hostInfo ? (
-                    <section style={styles.card}>
-                        <div style={styles.cardHeaderRow}>
-                            <h2 style={styles.sectionTitle}>Host</h2>
-                        </div>
-                        <div style={styles.compactStatsGrid}>
-                            <Stat
-                                label="Network"
-                                value={hostInfo.permissions.network ? 'allowed' : 'blocked'}
-                            />
-                            <Stat
-                                label="Persistent"
-                                value={hostInfo.permissions.persistent_storage ? 'allowed' : 'blocked'}
-                            />
-                            <Stat
-                                label="Storage used"
-                                value={`${hostInfo.storage.bytesUsed.toLocaleString()} bytes`}
-                            />
-                            <Stat
-                                label="Quota"
-                                value={
-                                    hostInfo.storage.quotaBytes === null
-                                        ? 'default'
-                                        : `${hostInfo.storage.quotaBytes.toLocaleString()} bytes`
-                                }
-                            />
-                        </div>
-                    </section>
-                ) : null}
+                <section style={styles.topStrip}>
+                    <Metric label="Checked" value={checked.toLocaleString()} />
+                    <Metric label="Rate" value={`${formatNumber(ratePerSec)}/s`} />
+                    <Metric label="Elapsed" value={`${elapsedSecs.toFixed(1)} s`} />
+                    <Metric label="State" value={uiState} />
+                    {hostInfo ? (
+                        <Metric
+                            label="Host"
+                            value={hostInfo.permissions.persistent_storage ? 'persistent' : 'session'}
+                        />
+                    ) : null}
+                </section>
 
-                <div style={styles.mainGrid}>
-                    <section style={styles.card}>
-                        <div style={styles.cardHeaderRow}>
-                            <h2 style={styles.sectionTitle}>Search</h2>
+                <div style={styles.layout}>
+                    <section style={styles.panel}>
+                        <div style={styles.panelHeader}>
+                            <div>
+                                <h2 style={styles.sectionTitle}>Work</h2>
+                            </div>
+                            <SegmentedControl
+                                value={workMode}
+                                onChange={setWorkMode}
+                                disabled={inputsDisabled}
+                            />
                         </div>
 
-                        <label style={styles.label}>
+                        <label style={styles.fieldFull}>
                             <span style={styles.labelText}>Mnemonic</span>
                             <textarea
                                 style={styles.textarea}
-                                rows={3}
+                                rows={4}
                                 value={mnemonic}
                                 onChange={(e) => setMnemonic(e.target.value)}
-                                placeholder="Enter mnemonic phrase"
+                                placeholder="word word word ..."
                                 disabled={inputsDisabled}
                             />
                         </label>
 
-                        <div style={styles.formGrid}>
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>Wanted prefix</span>
-                                <input
-                                    style={{
-                                        ...styles.input,
-                                        ...(prefixValidationError ? styles.invalidInput : null),
-                                    }}
-                                    value={wantedPrefix}
-                                    onChange={(e) => setWantedPrefix(e.target.value)}
-                                    placeholder="xch1ace"
-                                    aria-invalid={Boolean(prefixValidationError)}
-                                    disabled={inputsDisabled}
-                                />
-                                {prefixValidationError ? (
-                                    <span style={styles.fieldError}>{prefixValidationError}</span>
+                        {workMode === 'search' ? (
+                            <div style={styles.formStack}>
+                                <div style={styles.formGrid}>
+                                    <label style={styles.field}>
+                                        <span style={styles.labelText}>Prefix</span>
+                                        <input
+                                            style={{
+                                                ...styles.input,
+                                                ...(prefixValidationError ? styles.invalidInput : null),
+                                            }}
+                                            value={wantedPrefix}
+                                            onChange={(e) => setWantedPrefix(e.target.value)}
+                                            placeholder="xch1ace"
+                                            aria-invalid={Boolean(prefixValidationError)}
+                                            disabled={inputsDisabled}
+                                        />
+                                        <FieldError message={prefixValidationError} />
+                                    </label>
+
+                                    <label style={styles.field}>
+                                        <span style={styles.labelText}>Suffix</span>
+                                        <input
+                                            style={{
+                                                ...styles.input,
+                                                ...(suffixValidationError ? styles.invalidInput : null),
+                                            }}
+                                            value={wantedSuffix}
+                                            onChange={(e) => setWantedSuffix(e.target.value)}
+                                            placeholder="ace"
+                                            aria-invalid={Boolean(suffixValidationError)}
+                                            disabled={inputsDisabled}
+                                        />
+                                        <FieldError message={suffixValidationError} />
+                                    </label>
+
+                                    <label style={styles.field}>
+                                        <span style={styles.labelText}>Mode</span>
+                                        <select
+                                            style={styles.input}
+                                            value={mode}
+                                            onChange={(e) => setMode(e.target.value as Mode)}
+                                            disabled={inputsDisabled}
+                                        >
+                                            <option value="unhardened">unhardened</option>
+                                            <option value="hardened">hardened</option>
+                                            <option value="both">both</option>
+                                        </select>
+                                    </label>
+
+                                    <label style={styles.field}>
+                                        <span style={styles.labelText}>Search</span>
+                                        <select
+                                            style={styles.input}
+                                            value={searchMode}
+                                            onChange={(e) => setSearchMode(e.target.value as SearchMode)}
+                                            disabled={inputsDisabled}
+                                        >
+                                            <option value="fast">fast</option>
+                                            <option value="lowest">lowest index</option>
+                                        </select>
+                                    </label>
+
+                                    <NumberField
+                                        label="Start index"
+                                        value={startIndex}
+                                        onChange={setStartIndex}
+                                        disabled={inputsDisabled}
+                                    />
+
+                                    <NumberField
+                                        label="Workers"
+                                        value={workerCount}
+                                        onChange={setWorkerCount}
+                                        disabled={inputsDisabled}
+                                    />
+
+                                    <NumberField
+                                        label="Chunk size"
+                                        value={chunkSize}
+                                        onChange={setChunkSize}
+                                        disabled={inputsDisabled || searchMode !== 'lowest'}
+                                    />
+                                </div>
+
+                                {patternValidationError ? (
+                                    <div style={styles.formError}>{patternValidationError}</div>
                                 ) : null}
-                            </label>
 
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>Wanted suffix</span>
-                                <input
-                                    style={{
-                                        ...styles.input,
-                                        ...(suffixValidationError ? styles.invalidInput : null),
-                                    }}
-                                    value={wantedSuffix}
-                                    onChange={(e) => setWantedSuffix(e.target.value)}
-                                    placeholder="ace"
-                                    aria-invalid={Boolean(suffixValidationError)}
-                                    disabled={inputsDisabled}
-                                />
-                                {suffixValidationError ? (
-                                    <span style={styles.fieldError}>{suffixValidationError}</span>
-                                ) : null}
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>Mode</span>
-                                <select
-                                    style={styles.input}
-                                    value={mode}
-                                    onChange={(e) => setMode(e.target.value as Mode)}
-                                    disabled={inputsDisabled}
-                                >
-                                    <option value="hardened">hardened</option>
-                                    <option value="unhardened">unhardened</option>
-                                    <option value="both">both</option>
-                                </select>
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>Start index</span>
-                                <input
-                                    style={styles.input}
-                                    type="number"
-                                    value={startIndex}
-                                    onChange={(e) => setStartIndex(Number(e.target.value))}
-                                    disabled={inputsDisabled}
-                                />
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>Chunk size</span>
-                                <input
-                                    style={styles.input}
-                                    type="number"
-                                    value={chunkSize}
-                                    onChange={(e) => setChunkSize(Number(e.target.value))}
-                                    disabled={inputsDisabled}
-                                />
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>Worker count</span>
-                                <input
-                                    style={styles.input}
-                                    type="number"
-                                    value={workerCount}
-                                    onChange={(e) => setWorkerCount(Number(e.target.value))}
-                                    disabled={inputsDisabled}
-                                />
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>Search mode</span>
-                                <select
-                                    style={styles.input}
-                                    value={searchMode}
-                                    onChange={(e) => setSearchMode(e.target.value as SearchMode)}
-                                    disabled={inputsDisabled}
-                                >
-                                    <option value="fast">fast</option>
-                                    <option value="lowest">lowest</option>
-                                </select>
-                            </label>
-                        </div>
-
-                        <div style={styles.actions}>
-                            <button style={styles.primaryButton} onClick={handleStart} disabled={!canStart}>
-                                Start search
-                            </button>
-                            <button style={styles.secondaryButton} onClick={handleStop} disabled={!canStop}>
-                                Stop
-                            </button>
-                            <div style={styles.inlineStatus}>
-                                <span style={styles.inlineStatusLabel}>Status</span>
-                                <span style={styles.inlineStatusValue}>{status}</span>
+                                <div style={styles.actions}>
+                                    <button
+                                        style={{
+                                            ...styles.primaryButton,
+                                            ...(!canStart ? styles.disabledButton : null),
+                                        }}
+                                        onClick={handleStart}
+                                        disabled={!canStart}
+                                    >
+                                        Start
+                                    </button>
+                                    <button
+                                        style={{
+                                            ...styles.secondaryButton,
+                                            ...(!canStop ? styles.disabledButton : null),
+                                        }}
+                                        onClick={handleStop}
+                                        disabled={!canStop}
+                                    >
+                                        Stop
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+                        ) : (
+                            <div style={styles.formStack}>
+                                <div style={styles.formGrid}>
+                                    <NumberField
+                                        label="Index"
+                                        value={deriveIndex}
+                                        onChange={setDeriveIndex}
+                                        disabled={inputsDisabled}
+                                    />
+
+                                    <label style={styles.field}>
+                                        <span style={styles.labelText}>Address prefix</span>
+                                        <select
+                                            style={styles.input}
+                                            value={derivePrefix}
+                                            onChange={(e) => setDerivePrefix(e.target.value as AddressPrefix)}
+                                            disabled={inputsDisabled}
+                                        >
+                                            <option value="xch">xch</option>
+                                            <option value="txch">txch</option>
+                                        </select>
+                                    </label>
+
+                                    <label style={styles.field}>
+                                        <span style={styles.labelText}>Mode</span>
+                                        <select
+                                            style={styles.input}
+                                            value={mode}
+                                            onChange={(e) => setMode(e.target.value as Mode)}
+                                            disabled={inputsDisabled}
+                                        >
+                                            <option value="unhardened">unhardened</option>
+                                            <option value="hardened">hardened</option>
+                                            <option value="both">both</option>
+                                        </select>
+                                    </label>
+                                </div>
+
+                                <div style={styles.actions}>
+                                    <button
+                                        style={{
+                                            ...styles.primaryButton,
+                                            ...(!canDerive ? styles.disabledButton : null),
+                                        }}
+                                        onClick={handleDerive}
+                                        disabled={!canDerive}
+                                    >
+                                        Derive
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </section>
 
-                    <div style={styles.sideColumn}>
-                        <section style={styles.card}>
-                            <div style={styles.cardHeaderRow}>
-                                <h2 style={styles.sectionTitle}>Progress</h2>
-                            </div>
-                            <div style={styles.compactStatsGrid}>
-                                <Stat label="Checked" value={checked.toLocaleString()} />
-                                <Stat label="Rate/s" value={ratePerSec.toFixed(0)} />
-                                <Stat label="Elapsed" value={`${elapsedSecs.toFixed(1)} s`} />
-                                <Stat label="Status" value={status} mono />
-                            </div>
-                        </section>
-
-                        <section style={styles.card}>
-                            <div style={styles.cardHeaderRow}>
+                    <aside style={styles.panel}>
+                        <div style={styles.panelHeader}>
+                            <div>
                                 <h2 style={styles.sectionTitle}>Result</h2>
+                                <div style={styles.subtleLine}>{resultLabel}</div>
                             </div>
-                            {hit ? (
-                                <div style={styles.resultBox}>
-                                    <div style={styles.resultRow}>
-                                        <span style={styles.resultKey}>Index</span>
-                                        <span style={styles.resultValMono}>{hit.index}</span>
-                                    </div>
-                                    <div style={styles.resultRow}>
-                                        <span style={styles.resultKey}>Mode</span>
-                                        <span style={styles.resultValMono}>{hit.mode}</span>
-                                    </div>
-                                    <div style={styles.resultAddressBlock}>
-                                        <div style={styles.resultKey}>Address</div>
-                                        <div style={styles.resultAddress}>{hit.address}</div>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div style={styles.muted}>No result yet.</div>
-                            )}
-                        </section>
+                        </div>
+
+                        {results.length > 0 ? (
+                            <div style={styles.resultList}>
+                                {results.map((item) => (
+                                    <ResultRow
+                                        key={`${item.mode}-${item.index}-${item.address}`}
+                                        item={item}
+                                        onCopy={copyAddress}
+                                    />
+                                ))}
+                            </div>
+                        ) : (
+                            <div style={styles.emptyState}>Waiting for output</div>
+                        )}
 
                         {error ? (
-                            <section style={styles.errorBox}>
-                                <div style={styles.errorTitle}>Error</div>
-                                <div>{error}</div>
-                            </section>
+                            <div style={styles.errorBox}>
+                                <strong>Error</strong>
+                                <span>{error}</span>
+                            </div>
                         ) : null}
-                    </div>
+                    </aside>
                 </div>
             </div>
         </main>
     );
 }
 
-function Stat({
-                  label,
-                  value,
-                  mono = false,
-              }: {
-    label: string;
-    value: string;
-    mono?: boolean;
+function SegmentedControl({
+    value,
+    onChange,
+    disabled,
+}: {
+    value: WorkMode;
+    onChange: (value: WorkMode) => void;
+    disabled: boolean;
 }) {
     return (
-        <div style={styles.statCard}>
-            <div style={styles.statLabel}>{label}</div>
-            <div
-                style={{
-                    ...styles.statValue,
-                    ...(mono ? styles.monoValue : null),
-                }}
-            >
-                {value}
-            </div>
+        <div style={styles.segmented}>
+            {(['search', 'derive'] as WorkMode[]).map((item) => (
+                <button
+                    key={item}
+                    style={{
+                        ...styles.segmentButton,
+                        ...(value === item ? styles.segmentButtonActive : null),
+                    }}
+                    onClick={() => onChange(item)}
+                    disabled={disabled}
+                >
+                    {item === 'search' ? 'Search' : 'Index'}
+                </button>
+            ))}
         </div>
     );
 }
+
+function NumberField({
+    label,
+    value,
+    onChange,
+    disabled,
+}: {
+    label: string;
+    value: number;
+    onChange: (value: number) => void;
+    disabled: boolean;
+}) {
+    return (
+        <label style={styles.field}>
+            <span style={styles.labelText}>{label}</span>
+            <input
+                style={styles.input}
+                type="number"
+                min={0}
+                max={MAX_INDEX}
+                step={1}
+                value={value}
+                onChange={(e) => onChange(clampU32(Number(e.target.value)))}
+                disabled={disabled}
+            />
+        </label>
+    );
+}
+
+function FieldError({ message }: { message: string | null }) {
+    if (!message) {
+        return null;
+    }
+
+    return <span style={styles.fieldError}>{message}</span>;
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+    return (
+        <div style={styles.metric}>
+            <span style={styles.metricLabel}>{label}</span>
+            <span style={styles.metricValue}>{value}</span>
+        </div>
+    );
+}
+
+function ResultRow({
+    item,
+    onCopy,
+}: {
+    item: SearchHitPayload | DeriveAddressPayload;
+    onCopy: (address: string) => void;
+}) {
+    return (
+        <div style={styles.resultItem}>
+            <div style={styles.resultMeta}>
+                <span>Index {item.index}</span>
+                <span>{item.mode}</span>
+            </div>
+            <div style={styles.addressLine}>{item.address}</div>
+            <button style={styles.copyButton} onClick={() => void onCopy(item.address)}>
+                Copy
+            </button>
+        </div>
+    );
+}
+
+function clampU32(value: number): number {
+    if (!Number.isFinite(value)) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(MAX_INDEX, Math.floor(value)));
+}
+
+function formatNumber(value: number): string {
+    if (value >= 1000000) {
+        return `${(value / 1000000).toFixed(1)}m`;
+    }
+
+    if (value >= 1000) {
+        return `${(value / 1000).toFixed(1)}k`;
+    }
+
+    return value.toFixed(0);
+}
+
+const monoStack =
+    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace';
 
 const styles: Record<string, React.CSSProperties> = {
     page: {
         minHeight: '100vh',
         margin: 0,
-        background:
-            'radial-gradient(circle at top, rgba(37,99,235,0.08), transparent 28%), #0a0f1a',
-        color: '#e5e7eb',
+        background: '#151513',
+        color: '#f3f0e8',
         fontFamily:
             'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
     },
     shell: {
-        maxWidth: 1120,
+        width: 'min(1180px, calc(100vw - 32px))',
         margin: '0 auto',
-        padding: 18,
+        padding: '24px 0',
     },
     header: {
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'space-between',
         gap: 16,
-        marginBottom: 14,
+        marginBottom: 16,
+        flexWrap: 'wrap',
+    },
+    brandBlock: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        minWidth: 0,
+    },
+    brandMark: {
+        width: 40,
+        height: 40,
+        borderRadius: 8,
+        display: 'grid',
+        placeItems: 'center',
+        background: '#d7ff66',
+        color: '#12120f',
+        fontWeight: 800,
+        fontSize: 13,
     },
     title: {
         margin: 0,
-        fontSize: 24,
+        fontSize: 25,
         lineHeight: 1,
-        fontWeight: 700,
-        letterSpacing: -0.5,
+        fontWeight: 760,
+        letterSpacing: 0,
     },
-    subtitle: {
-        margin: '6px 0 0',
-        color: '#8ea0b8',
-        fontSize: 13,
-        lineHeight: 1.45,
-    },
-    headerStatus: {
-        minWidth: 120,
-        padding: '10px 12px',
-        borderRadius: 12,
-        background: 'rgba(15, 23, 42, 0.75)',
-        border: '1px solid rgba(148, 163, 184, 0.12)',
-        backdropFilter: 'blur(10px)',
-    },
-    statusLabel: {
-        fontSize: 11,
-        color: '#8ea0b8',
-        textTransform: 'uppercase',
-        letterSpacing: 0.8,
-    },
-    statusValue: {
-        marginTop: 4,
-        fontSize: 13,
-        fontWeight: 700,
+    subtleLine: {
+        marginTop: 5,
+        color: '#a7a194',
+        fontSize: 12,
+        lineHeight: 1.35,
         textTransform: 'capitalize',
     },
-    mainGrid: {
+    statusPill: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        minHeight: 34,
+        padding: '0 12px',
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.12)',
+        background: '#1f1f1b',
+        color: '#e9e2d0',
+        fontSize: 13,
+        fontWeight: 650,
+    },
+    statusDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 99,
+        background: '#41d6a3',
+        boxShadow: '0 0 0 3px rgba(65, 214, 163, 0.14)',
+    },
+    topStrip: {
         display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.4fr) minmax(320px, 0.86fr)',
-        gap: 14,
+        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gap: 1,
+        overflow: 'hidden',
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.1)',
+        background: 'rgba(243, 240, 232, 0.1)',
+        marginBottom: 16,
+    },
+    metric: {
+        display: 'grid',
+        gap: 5,
+        padding: '13px 14px',
+        background: '#1b1b18',
+        minWidth: 0,
+    },
+    metricLabel: {
+        color: '#8f897c',
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        letterSpacing: 0,
+    },
+    metricValue: {
+        color: '#f7f2e7',
+        fontSize: 18,
+        fontWeight: 760,
+        lineHeight: 1.2,
+        overflowWrap: 'anywhere',
+        textTransform: 'capitalize',
+    },
+    layout: {
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1.25fr) minmax(min(100%, 340px), 0.75fr)',
+        gap: 16,
         alignItems: 'start',
     },
-    sideColumn: {
-        display: 'grid',
-        gap: 14,
+    panel: {
+        padding: 18,
+        borderRadius: 8,
+        background: '#20201c',
+        border: '1px solid rgba(243, 240, 232, 0.11)',
+        boxShadow: '0 18px 55px rgba(0, 0, 0, 0.24)',
+        minWidth: 0,
     },
-    card: {
-        marginTop: 0,
-        padding: 16,
-        borderRadius: 14,
-        background: 'rgba(15, 23, 42, 0.82)',
-        border: '1px solid rgba(148, 163, 184, 0.12)',
-        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.22)',
-        backdropFilter: 'blur(10px)',
-    },
-    cardHeaderRow: {
+    panelHeader: {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginBottom: 12,
+        gap: 12,
+        marginBottom: 16,
+        flexWrap: 'wrap',
     },
     sectionTitle: {
         margin: 0,
-        fontSize: 14,
-        fontWeight: 700,
-        letterSpacing: 0.2,
+        color: '#fffaf0',
+        fontSize: 15,
+        fontWeight: 760,
+        letterSpacing: 0,
     },
-    label: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
+    segmented: {
+        display: 'inline-grid',
+        gridTemplateColumns: '1fr 1fr',
+        padding: 3,
+        borderRadius: 8,
+        background: '#151513',
+        border: '1px solid rgba(243, 240, 232, 0.1)',
+    },
+    segmentButton: {
+        height: 30,
+        minWidth: 72,
+        padding: '0 10px',
+        border: 0,
+        borderRadius: 6,
+        background: 'transparent',
+        color: '#9f9888',
+        fontSize: 12,
+        fontWeight: 750,
+        cursor: 'pointer',
+    },
+    segmentButtonActive: {
+        background: '#f3f0e8',
+        color: '#171714',
+    },
+    fieldFull: {
+        display: 'grid',
+        gap: 7,
+        minWidth: 0,
+    },
+    formStack: {
+        display: 'grid',
+        gap: 14,
+        marginTop: 14,
+    },
+    formGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 210px), 1fr))',
+        gap: 12,
+    },
+    field: {
+        display: 'grid',
+        gap: 7,
+        alignContent: 'start',
         minWidth: 0,
     },
     labelText: {
+        color: '#b1aa9c',
         fontSize: 12,
-        color: '#9fb0c7',
-        fontWeight: 500,
+        fontWeight: 700,
     },
     textarea: {
         width: '100%',
-        minHeight: 92,
-        borderRadius: 10,
-        border: '1px solid rgba(148, 163, 184, 0.16)',
-        background: '#0b1220',
-        color: '#e5e7eb',
-        padding: '10px 12px',
+        minHeight: 112,
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.13)',
+        background: '#151513',
+        color: '#f6f0e3',
+        padding: '12px 13px',
         resize: 'vertical',
         boxSizing: 'border-box',
         outline: 'none',
         fontSize: 13,
-        lineHeight: 1.45,
-    },
-    formGrid: {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-        gap: 12,
-        marginTop: 12,
+        lineHeight: 1.5,
     },
     input: {
         width: '100%',
         height: 40,
-        borderRadius: 10,
-        border: '1px solid rgba(148, 163, 184, 0.16)',
-        background: '#0b1220',
-        color: '#e5e7eb',
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.13)',
+        background: '#151513',
+        color: '#f6f0e3',
         padding: '0 12px',
         boxSizing: 'border-box',
         outline: 'none',
         fontSize: 13,
     },
     invalidInput: {
-        borderColor: 'rgba(248, 113, 113, 0.75)',
-        boxShadow: '0 0 0 1px rgba(248, 113, 113, 0.18)',
+        borderColor: '#e06464',
+        boxShadow: '0 0 0 2px rgba(224, 100, 100, 0.16)',
     },
     fieldError: {
-        color: '#fca5a5',
+        color: '#ff9f9f',
         fontSize: 12,
         lineHeight: 1.35,
+    },
+    formError: {
+        color: '#ffb2a8',
+        fontSize: 13,
+        lineHeight: 1.45,
     },
     actions: {
         display: 'flex',
         alignItems: 'center',
         gap: 10,
-        marginTop: 14,
         flexWrap: 'wrap',
     },
     primaryButton: {
         height: 40,
-        borderRadius: 10,
-        border: '1px solid rgba(96, 165, 250, 0.25)',
-        background: 'linear-gradient(180deg, #2563eb, #1d4ed8)',
-        color: '#fff',
-        padding: '0 14px',
+        minWidth: 112,
+        borderRadius: 8,
+        border: '1px solid rgba(215, 255, 102, 0.25)',
+        background: '#d7ff66',
+        color: '#12120f',
+        padding: '0 16px',
         fontSize: 13,
-        fontWeight: 700,
+        fontWeight: 800,
         cursor: 'pointer',
-        boxShadow: '0 8px 20px rgba(37, 99, 235, 0.28)',
     },
     secondaryButton: {
         height: 40,
-        borderRadius: 10,
-        border: '1px solid rgba(148, 163, 184, 0.18)',
-        background: 'rgba(15, 23, 42, 0.6)',
-        color: '#dbe4f0',
-        padding: '0 14px',
+        minWidth: 86,
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.13)',
+        background: '#292921',
+        color: '#f3f0e8',
+        padding: '0 15px',
         fontSize: 13,
-        fontWeight: 600,
+        fontWeight: 760,
         cursor: 'pointer',
     },
-    inlineStatus: {
-        marginLeft: 'auto',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        minHeight: 40,
-        padding: '0 12px',
-        borderRadius: 10,
-        background: '#0b1220',
-        border: '1px solid rgba(148, 163, 184, 0.12)',
+    disabledButton: {
+        opacity: 0.48,
+        cursor: 'not-allowed',
     },
-    inlineStatusLabel: {
-        fontSize: 12,
-        color: '#8ea0b8',
-    },
-    inlineStatusValue: {
-        fontSize: 12,
-        fontWeight: 700,
-        color: '#e5e7eb',
-    },
-    compactStatsGrid: {
+    resultList: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-        gap: 10,
+        gap: 14,
     },
-    statCard: {
-        padding: 12,
-        borderRadius: 12,
-        background: '#0b1220',
-        border: '1px solid rgba(148, 163, 184, 0.1)',
-        minWidth: 0,
-    },
-    statLabel: {
-        fontSize: 11,
-        color: '#8ea0b8',
-        textTransform: 'uppercase',
-        letterSpacing: 0.7,
-    },
-    statValue: {
-        marginTop: 6,
-        fontSize: 15,
-        fontWeight: 700,
-        lineHeight: 1.3,
-        wordBreak: 'break-word',
-    },
-    monoValue: {
-        fontFamily:
-            'ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace',
-        fontSize: 13,
-    },
-    resultBox: {
-        padding: 12,
-        borderRadius: 12,
-        background: '#0b1220',
-        border: '1px solid rgba(148, 163, 184, 0.1)',
+    resultItem: {
         display: 'grid',
         gap: 10,
+        paddingBottom: 14,
+        borderBottom: '1px solid rgba(243, 240, 232, 0.1)',
     },
-    resultRow: {
+    resultMeta: {
         display: 'flex',
-        alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 12,
+        gap: 10,
+        color: '#b3ab9b',
+        fontSize: 12,
+        fontWeight: 750,
+        textTransform: 'capitalize',
     },
-    resultKey: {
-        fontSize: 11,
-        color: '#8ea0b8',
-        textTransform: 'uppercase',
-        letterSpacing: 0.7,
-    },
-    resultValMono: {
-        fontFamily:
-            'ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace',
+    addressLine: {
+        fontFamily: monoStack,
         fontSize: 13,
-        fontWeight: 700,
-        color: '#e5e7eb',
+        lineHeight: 1.55,
+        color: '#f7f2e7',
+        overflowWrap: 'anywhere',
     },
-    resultAddressBlock: {
+    copyButton: {
+        justifySelf: 'start',
+        height: 32,
+        borderRadius: 8,
+        border: '1px solid rgba(65, 214, 163, 0.26)',
+        background: 'rgba(65, 214, 163, 0.12)',
+        color: '#93f1d3',
+        padding: '0 12px',
+        fontSize: 12,
+        fontWeight: 800,
+        cursor: 'pointer',
+    },
+    emptyState: {
+        minHeight: 158,
         display: 'grid',
-        gap: 6,
-        paddingTop: 2,
-    },
-    resultAddress: {
-        fontFamily:
-            'ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace',
-        fontSize: 13,
-        lineHeight: 1.5,
-        wordBreak: 'break-all',
-        color: '#dbe4f0',
-    },
-    muted: {
-        color: '#8ea0b8',
+        placeItems: 'center',
+        borderRadius: 8,
+        border: '1px dashed rgba(243, 240, 232, 0.16)',
+        color: '#8f897c',
         fontSize: 13,
     },
     errorBox: {
-        padding: 14,
-        borderRadius: 12,
-        background: 'rgba(127, 29, 29, 0.18)',
-        border: '1px solid rgba(239, 68, 68, 0.28)',
-        color: '#fecaca',
-    },
-    errorTitle: {
-        marginBottom: 6,
-        fontSize: 12,
-        fontWeight: 700,
-        textTransform: 'uppercase',
-        letterSpacing: 0.7,
+        display: 'grid',
+        gap: 6,
+        marginTop: 16,
+        paddingTop: 14,
+        borderTop: '1px solid rgba(224, 100, 100, 0.28)',
+        color: '#ffb2a8',
+        fontSize: 13,
+        lineHeight: 1.45,
     },
 };

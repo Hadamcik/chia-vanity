@@ -1,6 +1,9 @@
 import type {
+    DeriveAddressPayload,
+    DeriveAddressRequest,
     SearchCompletedPayload,
     SearchFailedPayload,
+    SearchHitPayload,
     SearchProgressPayload,
     SearchStatePayload,
     StartSearchRequest,
@@ -19,6 +22,12 @@ type ListenerMap = {
     [K in keyof EventPayloads]: Array<(payload: EventPayloads[K]) => void>;
 };
 
+type WorkerDonePayload = {
+    hit: SearchHitPayload | null;
+};
+
+const MAX_INDEX = 0xffffffff;
+
 const listeners: ListenerMap = {
     progress: [],
     completed: [],
@@ -33,6 +42,7 @@ let workers: Worker[] = [];
 let pendingWorkers = 0;
 let bestHit: SearchCompletedPayload['hit'] = null;
 let cancelView: Int32Array | null = null;
+let activeRunId = 0;
 
 function emit<K extends keyof EventPayloads>(
     kind: K,
@@ -66,12 +76,22 @@ function resetRunState() {
     cancelView = null;
 }
 
-function cleanupWorkers() {
+function createWorker(): Worker {
+    return new Worker(
+        new URL('../workers/vanityWorker.ts', import.meta.url),
+        { type: 'module' },
+    );
+}
+
+function cleanupWorkers(clearCancelView = true) {
     for (const worker of workers) {
         worker.terminate();
     }
     workers = [];
-    cancelView = null;
+
+    if (clearCancelView) {
+        cancelView = null;
+    }
 }
 
 function finish(payload: SearchCompletedPayload) {
@@ -107,56 +127,148 @@ function isBetterHit(
     return nextHit.mode === 'unhardened' && currentHit.mode === 'hardened';
 }
 
-export const browserWorkerRuntime: VanityRuntime = {
-    async startSearch(req: StartSearchRequest) {
-        if (running) {
-            throw new Error('search is already running');
+function emitProgress(checked: number) {
+    totalChecked += checked;
+
+    const elapsedSecs = (performance.now() - startedAt) / 1000;
+    const ratePerSec = elapsedSecs > 0 ? totalChecked / elapsedSecs : 0;
+
+    emit('progress', {
+        checked: totalChecked,
+        ratePerSec,
+        elapsedSecs,
+    });
+}
+
+function normalWorkerCount(requested: number): number {
+    return requested > 0
+        ? requested
+        : Math.max(1, navigator.hardwareConcurrency || 1);
+}
+
+function normalChunkSize(requested: number): number {
+    if (!Number.isFinite(requested) || requested <= 0) {
+        return 10000;
+    }
+
+    return Math.max(1, Math.floor(requested));
+}
+
+function ensureCancelView() {
+    if (typeof SharedArrayBuffer !== 'undefined') {
+        const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+        cancelView = new Int32Array(buffer);
+        Atomics.store(cancelView, 0, 0);
+    }
+}
+
+function postStartToWorker(
+    worker: Worker,
+    req: StartSearchRequest,
+    startIndex: number,
+    endIndex: number | null,
+    step: number,
+) {
+    worker.postMessage({
+        type: 'start',
+        payload: {
+            mnemonic: req.mnemonic,
+            wantedPrefix: req.wantedPrefix,
+            wantedSuffix: req.wantedSuffix,
+            startIndex,
+            endIndex,
+            step,
+            mode: req.mode,
+            searchMode: req.searchMode,
+            reportEvery: 1000,
+            cancelBuffer: cancelView?.buffer ?? null,
+        },
+    });
+}
+
+function startFastSearch(req: StartSearchRequest, workerCount: number, runId: number) {
+    pendingWorkers = workerCount;
+
+    for (let workerId = 0; workerId < workerCount; workerId += 1) {
+        const worker = createWorker();
+
+        worker.onmessage = (event: MessageEvent<any>) => {
+            if (!running || runId !== activeRunId) {
+                return;
+            }
+
+            const msg = event.data;
+
+            if (msg.type === 'progress') {
+                emitProgress(Number(msg.payload.checked) || 0);
+                return;
+            }
+
+            if (msg.type === 'hit') {
+                if (cancelView) {
+                    Atomics.store(cancelView, 0, 1);
+                }
+
+                finish({ hit: msg.payload });
+                return;
+            }
+
+            if (msg.type === 'stopped' || msg.type === 'done') {
+                pendingWorkers -= 1;
+                if (pendingWorkers <= 0 && running) {
+                    finish({ hit: null });
+                }
+                return;
+            }
+
+            if (msg.type === 'error') {
+                fail(msg.payload.message);
+            }
+        };
+
+        worker.onerror = (event) => {
+            if (running && runId === activeRunId) {
+                fail(event.message || 'worker failed');
+            }
+        };
+
+        workers.push(worker);
+        postStartToWorker(worker, req, req.startIndex + workerId, null, workerCount);
+    }
+}
+
+function startLowestSearch(req: StartSearchRequest, workerCount: number, runId: number) {
+    const chunkSize = normalChunkSize(req.chunkSize);
+    let chunkStart = Math.max(0, Math.floor(req.startIndex));
+
+    const startChunk = () => {
+        if (!running || runId !== activeRunId) {
+            return;
         }
 
-        const validationError = validateWantedPatterns(req.wantedPrefix, req.wantedSuffix);
+        cleanupWorkers(false);
 
-        if (validationError) {
-            throw new Error(validationError);
+        if (chunkStart > MAX_INDEX) {
+            finish({ hit: null });
+            return;
         }
 
-        running = true;
-        resetRunState();
-        emit('state', { running: true });
-
-        const workerCount =
-            req.workerCount > 0
-                ? req.workerCount
-                : Math.max(1, navigator.hardwareConcurrency || 1);
-
-        if (typeof SharedArrayBuffer !== 'undefined') {
-            const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
-            cancelView = new Int32Array(buffer);
-            Atomics.store(cancelView, 0, 0);
-        }
-
+        const chunkEnd = Math.min(MAX_INDEX, chunkStart + chunkSize - 1);
         pendingWorkers = workerCount;
+        bestHit = null;
 
         for (let workerId = 0; workerId < workerCount; workerId += 1) {
-            const worker = new Worker(
-                new URL('../workers/vanityWorker.ts', import.meta.url),
-                { type: 'module' },
-            );
+            const worker = createWorker();
 
             worker.onmessage = (event: MessageEvent<any>) => {
+                if (!running || runId !== activeRunId) {
+                    return;
+                }
+
                 const msg = event.data;
 
                 if (msg.type === 'progress') {
-                    totalChecked += Number(msg.payload.checked) || 0;
-
-                    const elapsedSecs = (performance.now() - startedAt) / 1000;
-                    const ratePerSec =
-                        elapsedSecs > 0 ? totalChecked / elapsedSecs : 0;
-
-                    emit('progress', {
-                        checked: totalChecked,
-                        ratePerSec,
-                        elapsedSecs,
-                    });
+                    emitProgress(Number(msg.payload.checked) || 0);
                     return;
                 }
 
@@ -166,28 +278,31 @@ export const browserWorkerRuntime: VanityRuntime = {
                     if (isBetterHit(hit, bestHit)) {
                         bestHit = hit;
                     }
+                    return;
+                }
 
-                    if (cancelView) {
-                        Atomics.store(cancelView, 0, 1);
+                if (msg.type === 'done') {
+                    const done = msg.payload as WorkerDonePayload;
+
+                    if (done.hit && isBetterHit(done.hit, bestHit)) {
+                        bestHit = done.hit;
                     }
 
-                    if (req.searchMode === 'fast') {
-                        finish({ hit });
-                    } else {
-                        finish({ hit: bestHit });
+                    pendingWorkers -= 1;
+                    if (pendingWorkers <= 0 && running) {
+                        if (bestHit) {
+                            finish({ hit: bestHit });
+                        } else if (chunkEnd >= MAX_INDEX) {
+                            finish({ hit: null });
+                        } else {
+                            chunkStart = chunkEnd + 1;
+                            startChunk();
+                        }
                     }
                     return;
                 }
 
                 if (msg.type === 'stopped') {
-                    pendingWorkers -= 1;
-                    if (pendingWorkers <= 0 && running) {
-                        finish({ hit: bestHit });
-                    }
-                    return;
-                }
-
-                if (msg.type === 'done') {
                     pendingWorkers -= 1;
                     if (pendingWorkers <= 0 && running) {
                         finish({ hit: bestHit });
@@ -201,25 +316,77 @@ export const browserWorkerRuntime: VanityRuntime = {
             };
 
             worker.onerror = (event) => {
-                fail(event.message || 'worker failed');
+                if (running && runId === activeRunId) {
+                    fail(event.message || 'worker failed');
+                }
             };
 
             workers.push(worker);
+            postStartToWorker(
+                worker,
+                req,
+                chunkStart + workerId,
+                chunkEnd,
+                workerCount,
+            );
+        }
+    };
 
-            worker.postMessage({
-                type: 'start',
-                payload: {
-                    mnemonic: req.mnemonic,
-                    wantedPrefix: req.wantedPrefix,
-                    wantedSuffix: req.wantedSuffix,
-                    startIndex: req.startIndex + workerId,
-                    step: workerCount,
-                    mode: req.mode,
-                    searchMode: req.searchMode,
-                    reportEvery: 1000,
-                    cancelBuffer: cancelView?.buffer ?? null,
-                },
-            });
+    startChunk();
+}
+
+function deriveInWorker(req: DeriveAddressRequest): Promise<DeriveAddressPayload[]> {
+    return new Promise((resolve, reject) => {
+        const worker = createWorker();
+
+        worker.onmessage = (event: MessageEvent<any>) => {
+            const msg = event.data;
+
+            if (msg.type === 'derived') {
+                worker.terminate();
+                resolve(msg.payload as DeriveAddressPayload[]);
+                return;
+            }
+
+            if (msg.type === 'error') {
+                worker.terminate();
+                reject(new Error(msg.payload.message));
+            }
+        };
+
+        worker.onerror = (event) => {
+            worker.terminate();
+            reject(new Error(event.message || 'worker failed'));
+        };
+
+        worker.postMessage({ type: 'derive', payload: req });
+    });
+}
+
+export const browserWorkerRuntime: VanityRuntime = {
+    async startSearch(req: StartSearchRequest) {
+        if (running) {
+            throw new Error('search is already running');
+        }
+
+        const validationError = validateWantedPatterns(req.wantedPrefix, req.wantedSuffix);
+
+        if (validationError) {
+            throw new Error(validationError);
+        }
+
+        running = true;
+        activeRunId += 1;
+        resetRunState();
+        ensureCancelView();
+        emit('state', { running: true });
+
+        const workerCount = normalWorkerCount(req.workerCount);
+
+        if (req.searchMode === 'lowest') {
+            startLowestSearch(req, workerCount, activeRunId);
+        } else {
+            startFastSearch(req, workerCount, activeRunId);
         }
     },
 
@@ -233,8 +400,11 @@ export const browserWorkerRuntime: VanityRuntime = {
             return;
         }
 
-        // Fallback for environments without SharedArrayBuffer.
         finish({ hit: bestHit });
+    },
+
+    async deriveAddresses(req: DeriveAddressRequest) {
+        return deriveInWorker(req);
     },
 
     async getSearchState() {
