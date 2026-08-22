@@ -443,7 +443,7 @@ export default function VanityApp() {
             <div style={styles.shell}>
                 <header style={styles.header}>
                     <div style={styles.brandBlock}>
-                        <div style={styles.brandMark}>CV</div>
+                        <img style={styles.brandMark} src="/icon.svg" alt="" aria-hidden="true" />
                         <div>
                             <h1 style={styles.title}>Chia Vanity</h1>
                             <div style={styles.subtleLine}>
@@ -1077,12 +1077,9 @@ const styles: Record<string, React.CSSProperties> = {
         width: 40,
         height: 40,
         borderRadius: 8,
-        display: 'grid',
-        placeItems: 'center',
-        background: '#d7ff66',
-        color: '#12120f',
-        fontWeight: 800,
-        fontSize: 13,
+        display: 'block',
+        objectFit: 'cover',
+        boxShadow: '0 0 0 1px rgba(243, 240, 232, 0.12)',
     },
     title: {
         margin: 0,

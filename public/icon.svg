@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Chia Vanity">
+  <defs>
+    <linearGradient id="bg" x1="160" x2="864" y1="104" y2="936" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#151513"/>
+      <stop offset="1" stop-color="#20201c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="matrix(510 0 0 510 586 478)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d7ff66" stop-opacity=".44"/>
+      <stop offset="1" stop-color="#d7ff66" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="20" flood-color="#000" flood-opacity=".42"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="226" fill="url(#glow)"/>
+  <g opacity=".36" stroke-linecap="round">
+    <path d="M130 176h760M130 268h760M130 360h760M130 452h760M130 544h760M130 636h760M130 728h760M130 820h760" stroke="#d7ff66" stroke-width="9"/>
+    <path d="M158 152h30M252 152h30M346 152h30M440 152h30M534 152h30M628 152h30M722 152h30M816 152h30M158 244h30M252 244h30M346 244h30M440 244h30M534 244h30M628 244h30M722 244h30M816 244h30M158 336h30M252 336h30M346 336h30M440 336h30M534 336h30M628 336h30M722 336h30M816 336h30M158 612h30M252 612h30M346 612h30M440 612h30M534 612h30M628 612h30M722 612h30M816 612h30M158 796h30M252 796h30M346 796h30M440 796h30M534 796h30M628 796h30M722 796h30M816 796h30" stroke="#41d6a3" stroke-width="10"/>
+  </g>
+
+  <g opacity=".92">
+    <path d="M250 142l24 64 64 24-64 24-24 64-24-64-64-24 64-24 24-64z" fill="#41d6a3"/>
+    <path d="M786 142l31 86 86 31-86 31-31 86-31-86-86-31 86-31 31-86z" fill="#d7ff66"/>
+  </g>
+
+  <g transform="translate(336 217) rotate(-12)" opacity=".82">
+    <ellipse cx="58" cy="72" rx="48" ry="92" fill="#d7ff66"/>
+    <ellipse cx="142" cy="96" rx="52" ry="88" fill="#a6f04a"/>
+    <ellipse cx="58" cy="198" rx="56" ry="88" fill="#75d944"/>
+    <ellipse cx="154" cy="218" rx="58" ry="88" fill="#41d6a3"/>
+    <path d="M106 42v262" stroke="#f6ffdd" stroke-width="12" stroke-linecap="round" opacity=".66"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <path d="M352 684L230 826" stroke="#f6ffdd" stroke-width="78" stroke-linecap="round"/>
+    <path d="M352 684L230 826" stroke="#268236" stroke-width="48" stroke-linecap="round"/>
+    <path d="M352 684L230 826" stroke="#7ee741" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="609" cy="453" r="265" fill="#f6ffdd"/>
+    <circle cx="609" cy="453" r="227" fill="#20201c"/>
+    <circle cx="609" cy="453" r="196" fill="#2f7829"/>
+    <circle cx="609" cy="453" r="196" fill="#41d6a3" opacity=".16"/>
+    <circle cx="609" cy="453" r="196" fill="none" stroke="#7ee741" stroke-width="12"/>
+    <path d="M448 335a205 205 0 0 1 310-29" fill="none" stroke="#41d6a3" stroke-width="18"/>
+    <path d="M448 636a226 226 0 0 0 376-98" fill="none" stroke="#f6ffdd" stroke-width="18"/>
+    <text x="609" y="492" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-size="118" font-weight="900" fill="#f6ffdd">xch1</text>
+    <path d="M500 562h222" stroke="#d7ff66" stroke-width="28" stroke-linecap="round"/>
+    <path d="M765 562h84" stroke="#d7ff66" stroke-width="28" stroke-linecap="round" stroke-dasharray="1 42"/>
+  </g>
+
+  <rect x="13" y="13" width="998" height="998" rx="218" fill="none" stroke="#f3f0e8" stroke-opacity=".28" stroke-width="10"/>
+</svg>
