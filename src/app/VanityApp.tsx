@@ -203,20 +203,6 @@ export default function VanityApp() {
         credentialKind === 'public'
             ? canUsePublicCredential && hasValidPublicKey
             : hasMnemonic || hasSecretKey;
-    const credentialReadyLabel = hasRequiredKeyMaterial
-        ? credentialKind === 'public'
-            ? 'Public key ready'
-            : hasSecretKey
-                ? 'Private key ready'
-                : 'Mnemonic ready'
-        : credentialKind === 'public'
-            ? activeCredentialSource === 'sage'
-                ? 'Import a Sage public key'
-                : 'Paste a master public key'
-            : activeCredentialSource === 'sage'
-                ? 'Import a Sage private key'
-                : 'Paste a mnemonic';
-
     const canStart = useMemo(() => (
         hasRequiredKeyMaterial &&
         !patternValidationError &&
@@ -446,9 +432,6 @@ export default function VanityApp() {
                         <img style={styles.brandMark} src="/icon.svg" alt="" aria-hidden="true" />
                         <div>
                             <h1 style={styles.title}>Chia Vanity</h1>
-                            <div style={styles.subtleLine}>
-                                {workerCount > 0 ? `${workerCount} workers` : 'auto workers'} · {mode}
-                            </div>
                         </div>
                     </div>
 
@@ -463,13 +446,7 @@ export default function VanityApp() {
                         <div style={styles.panelHeader}>
                             <div>
                                 <h2 style={styles.sectionTitle}>Generate from</h2>
-                                <div style={styles.subtleLine}>{credentialReadyLabel}</div>
                             </div>
-                            {isSage ? (
-                                <span style={styles.sageBadge}>Sage</span>
-                            ) : (
-                                <span style={styles.browserBadge}>Browser</span>
-                            )}
                         </div>
 
                         <div style={styles.sourceLayout}>
@@ -644,11 +621,6 @@ export default function VanityApp() {
                                 <h2 style={styles.sectionTitle}>
                                     {workMode === 'search' ? 'Search settings' : 'Index settings'}
                                 </h2>
-                                <div style={styles.subtleLine}>
-                                    {workMode === 'search'
-                                        ? 'Choose what the address should match'
-                                        : 'Derive one address at a known index'}
-                                </div>
                             </div>
                             <SegmentedControl
                                 value={workMode}
@@ -659,12 +631,12 @@ export default function VanityApp() {
 
                         {workMode === 'search' ? (
                             <div style={styles.formStack}>
-                                <div style={styles.formGrid}>
-                                    <label style={styles.field}>
+                                <div style={styles.targetGrid}>
+                                    <label style={styles.targetField}>
                                         <span style={styles.labelText}>Prefix</span>
                                         <input
                                             style={{
-                                                ...styles.input,
+                                                ...styles.targetInput,
                                                 ...(prefixValidationError ? styles.invalidInput : null),
                                             }}
                                             value={wantedPrefix}
@@ -676,11 +648,11 @@ export default function VanityApp() {
                                         <FieldError message={prefixValidationError} />
                                     </label>
 
-                                    <label style={styles.field}>
+                                    <label style={styles.targetField}>
                                         <span style={styles.labelText}>Suffix</span>
                                         <input
                                             style={{
-                                                ...styles.input,
+                                                ...styles.targetInput,
                                                 ...(suffixValidationError ? styles.invalidInput : null),
                                             }}
                                             value={wantedSuffix}
@@ -691,54 +663,50 @@ export default function VanityApp() {
                                         />
                                         <FieldError message={suffixValidationError} />
                                     </label>
-
-                                    <label style={styles.field}>
-                                        <span style={styles.labelText}>Search</span>
-                                        <select
-                                            style={styles.input}
-                                            value={searchMode}
-                                            onChange={(e) => setSearchMode(e.target.value as SearchMode)}
-                                            disabled={inputsDisabled}
-                                        >
-                                            <option value="fast">fast</option>
-                                            <option value="lowest">lowest index</option>
-                                        </select>
-                                    </label>
-
-                                    <NumberField
-                                        label="Start index"
-                                        value={startIndex}
-                                        onChange={setStartIndex}
-                                        disabled={inputsDisabled}
-                                    />
-
-                                    <NumberField
-                                        label="Workers"
-                                        value={workerCount}
-                                        onChange={setWorkerCount}
-                                        disabled={inputsDisabled}
-                                    />
-
-                                    <NumberField
-                                        label="Chunk size"
-                                        value={chunkSize}
-                                        onChange={setChunkSize}
-                                        disabled={inputsDisabled || searchMode !== 'lowest'}
-                                    />
                                 </div>
+
+                                <details style={styles.advancedDetails}>
+                                    <summary style={styles.advancedSummary}>Advanced</summary>
+                                    <div style={styles.advancedGrid}>
+                                        <label style={styles.field}>
+                                            <span style={styles.labelText}>Search strategy</span>
+                                            <select
+                                                style={styles.input}
+                                                value={searchMode}
+                                                onChange={(e) => setSearchMode(e.target.value as SearchMode)}
+                                                disabled={inputsDisabled}
+                                            >
+                                                <option value="fast">fast</option>
+                                                <option value="lowest">lowest index</option>
+                                            </select>
+                                        </label>
+
+                                        <NumberField
+                                            label="Start index"
+                                            value={startIndex}
+                                            onChange={setStartIndex}
+                                            disabled={inputsDisabled}
+                                        />
+
+                                        <NumberField
+                                            label="Workers"
+                                            value={workerCount}
+                                            onChange={setWorkerCount}
+                                            disabled={inputsDisabled}
+                                        />
+
+                                        <NumberField
+                                            label="Chunk size"
+                                            value={chunkSize}
+                                            onChange={setChunkSize}
+                                            disabled={inputsDisabled || searchMode !== 'lowest'}
+                                        />
+                                    </div>
+                                </details>
 
                                 {patternValidationError ? (
                                     <div style={styles.formError}>{patternValidationError}</div>
                                 ) : null}
-                                {!hasRequiredKeyMaterial ? (
-                                    <CredentialHint
-                                        isSage={isSage}
-                                        kind={credentialKind}
-                                        source={activeCredentialSource}
-                                        publicAllowed={canUsePublicCredential}
-                                    />
-                                ) : null}
-
                                 <div style={styles.actions}>
                                     <button
                                         style={{
@@ -799,14 +767,6 @@ export default function VanityApp() {
                                         Derive
                                     </button>
                                 </div>
-                                {!hasRequiredKeyMaterial ? (
-                                    <CredentialHint
-                                        isSage={isSage}
-                                        kind={credentialKind}
-                                        source={activeCredentialSource}
-                                        publicAllowed={canUsePublicCredential}
-                                    />
-                                ) : null}
                             </div>
                         )}
                     </section>
@@ -825,7 +785,6 @@ export default function VanityApp() {
                                 <Metric label="Rate" value={`${formatNumber(ratePerSec)}/s`} />
                                 <Metric label="Elapsed" value={`${elapsedSecs.toFixed(1)} s`} />
                                 <Metric label="State" value={uiState} />
-                                <Metric label="Host" value={isSage ? 'Sage' : 'Browser'} />
                             </div>
                         </section>
 
@@ -940,34 +899,6 @@ function PermissionPill({ granted, label }: { granted: boolean; label: string })
             {granted ? 'Granted' : 'Needs permission'} · {label}
         </span>
     );
-}
-
-function CredentialHint({
-    isSage,
-    kind,
-    source,
-    publicAllowed,
-}: {
-    isSage: boolean;
-    kind: CredentialKind;
-    source: CredentialSource;
-    publicAllowed: boolean;
-}) {
-    let message = '';
-
-    if (kind === 'public' && !publicAllowed) {
-        message = 'Public-key mode is only available for unhardened derivation.';
-    } else if (isSage && source === 'sage') {
-        message = kind === 'public'
-            ? 'Import the public key from Sage to continue.'
-            : 'Import the private key from Sage to continue.';
-    } else {
-        message = kind === 'public'
-            ? 'Paste a master public key to continue.'
-            : 'Paste a mnemonic to continue.';
-    }
-
-    return <div style={styles.credentialHint}>{message}</div>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -1155,12 +1086,6 @@ const styles: Record<string, React.CSSProperties> = {
         overflowWrap: 'anywhere',
         textTransform: 'capitalize',
     },
-    layout: {
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.25fr) minmax(min(100%, 340px), 0.75fr)',
-        gap: 16,
-        alignItems: 'start',
-    },
     panel: {
         padding: 18,
         borderRadius: 8,
@@ -1221,28 +1146,6 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: 'end',
         marginBottom: 12,
     },
-    credentialPanel: {
-        display: 'grid',
-        gap: 13,
-        padding: 14,
-        borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.1)',
-        background: '#191914',
-    },
-    credentialHeader: {
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 12,
-        flexWrap: 'wrap',
-    },
-    credentialTitle: {
-        margin: 0,
-        color: '#fffaf0',
-        fontSize: 13,
-        fontWeight: 800,
-        letterSpacing: 0,
-    },
     choiceGrid: {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
@@ -1298,30 +1201,6 @@ const styles: Record<string, React.CSSProperties> = {
         background: '#f3f0e8',
         color: '#171714',
     },
-    sageBadge: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        minHeight: 26,
-        padding: '0 9px',
-        borderRadius: 8,
-        border: '1px solid rgba(65, 214, 163, 0.25)',
-        background: 'rgba(65, 214, 163, 0.1)',
-        color: '#93f1d3',
-        fontSize: 11,
-        fontWeight: 850,
-    },
-    browserBadge: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        minHeight: 26,
-        padding: '0 9px',
-        borderRadius: 8,
-        border: '1px solid rgba(255, 189, 89, 0.24)',
-        background: 'rgba(255, 189, 89, 0.08)',
-        color: '#ffd08a',
-        fontSize: 11,
-        fontWeight: 850,
-    },
     formStack: {
         display: 'grid',
         gap: 14,
@@ -1330,6 +1209,46 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 210px), 1fr))',
         gap: 12,
+    },
+    targetGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',
+        gap: 14,
+    },
+    targetField: {
+        display: 'grid',
+        gap: 8,
+        minWidth: 0,
+    },
+    targetInput: {
+        width: '100%',
+        height: 48,
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.16)',
+        background: '#151513',
+        color: '#f6f0e3',
+        padding: '0 14px',
+        boxSizing: 'border-box',
+        outline: 'none',
+        fontSize: 15,
+        fontWeight: 650,
+    },
+    advancedDetails: {
+        borderTop: '1px solid rgba(243, 240, 232, 0.1)',
+        paddingTop: 12,
+    },
+    advancedSummary: {
+        color: '#d6cfbf',
+        fontSize: 13,
+        fontWeight: 800,
+        cursor: 'pointer',
+        userSelect: 'none',
+    },
+    advancedGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 210px), 1fr))',
+        gap: 12,
+        marginTop: 12,
     },
     field: {
         display: 'grid',
@@ -1379,11 +1298,6 @@ const styles: Record<string, React.CSSProperties> = {
     },
     formError: {
         color: '#ffb2a8',
-        fontSize: 13,
-        lineHeight: 1.45,
-    },
-    credentialHint: {
-        color: '#d6cfbf',
         fontSize: 13,
         lineHeight: 1.45,
     },
