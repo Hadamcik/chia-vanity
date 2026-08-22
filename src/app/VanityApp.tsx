@@ -42,7 +42,7 @@ export default function VanityApp() {
     const [mnemonic, setMnemonic] = useState('');
     const [masterSecretKey, setMasterSecretKey] = useState('');
     const [masterPublicKey, setMasterPublicKey] = useState('');
-    const [wantedPrefix, setWantedPrefix] = useState('xch1ace');
+    const [wantedPrefix, setWantedPrefix] = useState('ace');
     const [wantedSuffix, setWantedSuffix] = useState('');
     const [startIndex, setStartIndex] = useState(0);
     const [chunkSize, setChunkSize] = useState(10000);
@@ -241,7 +241,7 @@ export default function VanityApp() {
             mnemonic: credentialKind === 'private' ? mnemonic.trim() : '',
             masterSecretKey: credentialKind === 'private' ? normalizeSecretKeyInput(masterSecretKey) : '',
             masterPublicKey: credentialKind === 'public' ? normalizePublicKeyInput(masterPublicKey) : '',
-            wantedPrefix: wantedPrefix.trim(),
+            wantedPrefix: wantedPrefixForSearch(wantedPrefix),
             wantedSuffix: wantedSuffix.trim(),
             startIndex: clampU32(startIndex),
             chunkSize: Math.max(1, Math.floor(chunkSize) || 10000),
@@ -650,19 +650,25 @@ export default function VanityApp() {
                         {workMode === 'search' ? (
                             <div style={styles.formStack}>
                                 <div style={styles.targetGrid}>
-                                    <label style={styles.targetField}>
+                                    <label style={styles.targetField} htmlFor="wanted-prefix">
                                         <span style={styles.labelText}>Prefix</span>
-                                        <input
+                                        <div
                                             style={{
-                                                ...styles.targetInput,
+                                                ...styles.prefixedInputWrap,
                                                 ...(prefixValidationError ? styles.invalidInput : null),
                                             }}
-                                            value={wantedPrefix}
-                                            onChange={(e) => setWantedPrefix(e.target.value)}
-                                            placeholder="xch1ace"
-                                            aria-invalid={Boolean(prefixValidationError)}
-                                            disabled={inputsDisabled}
-                                        />
+                                        >
+                                            <span style={styles.prefixAdornment}>xch1</span>
+                                            <input
+                                                id="wanted-prefix"
+                                                style={styles.prefixedInput}
+                                                value={wantedPrefix}
+                                                onChange={(e) => setWantedPrefix(stripWantedPrefixInput(e.target.value))}
+                                                placeholder="ace"
+                                                aria-invalid={Boolean(prefixValidationError)}
+                                                disabled={inputsDisabled}
+                                            />
+                                        </div>
                                         <FieldError message={prefixValidationError} />
                                     </label>
 
@@ -963,6 +969,30 @@ function normalizePublicKeyInput(value: string): string {
 
 function normalizeSecretKeyInput(value: string): string {
     return value.trim().toLowerCase().replace(/^0x/, '');
+}
+
+function wantedPrefixForSearch(value: string): string {
+    const trimmed = value.trim().toLowerCase();
+
+    if (trimmed.length === 0) {
+        return '';
+    }
+
+    return `xch1${trimmed}`;
+}
+
+function stripWantedPrefixInput(value: string): string {
+    const trimmed = value.trim().toLowerCase();
+
+    if (trimmed.startsWith('txch1')) {
+        return trimmed.slice('txch1'.length);
+    }
+
+    if (trimmed.startsWith('xch1')) {
+        return trimmed.slice('xch1'.length);
+    }
+
+    return value;
 }
 
 function validateMasterPublicKey(value: string): string | null {
@@ -1284,6 +1314,43 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: 8,
         border: '1px solid rgba(243, 240, 232, 0.16)',
         background: '#151513',
+        color: '#f6f0e3',
+        padding: '0 14px',
+        boxSizing: 'border-box',
+        outline: 'none',
+        fontSize: 15,
+        fontWeight: 650,
+    },
+    prefixedInputWrap: {
+        display: 'flex',
+        alignItems: 'center',
+        width: '100%',
+        height: 48,
+        borderRadius: 8,
+        border: '1px solid rgba(243, 240, 232, 0.16)',
+        background: '#151513',
+        boxSizing: 'border-box',
+        overflow: 'hidden',
+    },
+    prefixAdornment: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        alignSelf: 'stretch',
+        padding: '0 12px 0 14px',
+        borderRight: '1px solid rgba(243, 240, 232, 0.11)',
+        color: '#a7a194',
+        background: '#1b1b18',
+        fontSize: 15,
+        fontWeight: 800,
+        fontFamily: monoStack,
+        whiteSpace: 'nowrap',
+    },
+    prefixedInput: {
+        flex: 1,
+        minWidth: 0,
+        height: '100%',
+        border: 0,
+        background: 'transparent',
         color: '#f6f0e3',
         padding: '0 14px',
         boxSizing: 'border-box',
