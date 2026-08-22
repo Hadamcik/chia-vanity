@@ -104,6 +104,15 @@ export const sageRuntime = {
         }
     },
 
+    async getSageDerivedPublicKeys(offset: number, limit: number, hardened = false) {
+        const host = getSageHost();
+        if (!host) {
+            throw new Error('Sage host bridge is not available');
+        }
+
+        return await host.getPublicKeys(offset, limit, hardened);
+    },
+
     async onSageCapabilitiesChange(cb: (capabilities: string[]) => void) {
         const host = getSageHost();
         if (!host) {

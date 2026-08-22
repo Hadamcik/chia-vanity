@@ -7,6 +7,7 @@ export const runtime = {
     resetAppStorage: sageRuntime.resetAppStorage,
     getSageKeyMaterial: sageRuntime.getSageKeyMaterial,
     getSageCapabilities: sageRuntime.getSageCapabilities,
+    getSageDerivedPublicKeys: sageRuntime.getSageDerivedPublicKeys,
     onSageCapabilitiesChange: sageRuntime.onSageCapabilitiesChange,
     getSageSecretKey: sageRuntime.getSageSecretKey,
 };
