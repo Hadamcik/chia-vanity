@@ -45,6 +45,7 @@ export interface StartSearchRequest {
     mnemonic: string;
     masterSecretKey: string;
     masterPublicKey: string;
+    addressPrefix: 'xch' | 'txch';
     wantedPrefix: string;
     wantedSuffix: string;
     startIndex: number;

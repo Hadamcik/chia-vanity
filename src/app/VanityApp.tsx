@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { runtime } from '../runtime';
 import type {
     DeriveAddressPayload,
@@ -19,13 +19,13 @@ type WorkMode = 'search' | 'derive';
 type AddressPrefix = 'xch' | 'txch';
 type CredentialKind = 'public' | 'private';
 type CredentialSource = 'sage' | 'manual';
+type ThemeMode = 'auto' | 'light' | 'dark';
 
 const MAX_INDEX = 0xffffffff;
 const WALLET_KEY_CAPABILITY = 'wallet.get_key';
 const WALLET_PUBLIC_KEYS_CAPABILITY = 'wallet.get_public_keys';
 const WALLET_SECRET_CAPABILITY = 'wallet.get_secret_key';
 const SAGE_PUBLIC_KEY_CHUNK_LIMIT = 1000;
-
 interface SageKeyMaterial {
     fingerprint: number;
     name: string;
@@ -45,6 +45,7 @@ export default function VanityApp() {
     const [mnemonic, setMnemonic] = useState('');
     const [masterSecretKey, setMasterSecretKey] = useState('');
     const [masterPublicKey, setMasterPublicKey] = useState('');
+    const [wantedAddressPrefix, setWantedAddressPrefix] = useState<AddressPrefix>('xch');
     const [wantedPrefix, setWantedPrefix] = useState('ace');
     const [wantedSuffix, setWantedSuffix] = useState('');
     const [startIndex, setStartIndex] = useState(0);
@@ -70,7 +71,17 @@ export default function VanityApp() {
     const [loadingSageKey, setLoadingSageKey] = useState(false);
     const [loadingSageSecret, setLoadingSageSecret] = useState(false);
     const [allowUnsafeMnemonicPaste, setAllowUnsafeMnemonicPaste] = useState(false);
+    const [themeMode, setThemeMode] = useState<ThemeMode>('auto');
     const sageSearchCancelRef = useRef(false);
+
+    useLayoutEffect(() => {
+        if (themeMode === 'auto') {
+            document.documentElement.removeAttribute('data-theme');
+        } else {
+            document.documentElement.dataset.theme = themeMode;
+        }
+
+    }, [themeMode]);
 
     useEffect(() => {
         let cancelled = false;
@@ -271,7 +282,8 @@ export default function VanityApp() {
             mnemonic: credentialKind === 'private' ? mnemonic.trim() : '',
             masterSecretKey: credentialKind === 'private' ? normalizeSecretKeyInput(masterSecretKey) : '',
             masterPublicKey: credentialKind === 'public' ? normalizePublicKeyInput(masterPublicKey) : '',
-            wantedPrefix: wantedPrefixForSearch(wantedPrefix),
+            addressPrefix: wantedAddressPrefix,
+            wantedPrefix: wantedPrefixForSearch(wantedPrefix, wantedAddressPrefix),
             wantedSuffix: wantedSuffix.trim(),
             startIndex: clampU32(startIndex),
             chunkSize: Math.max(1, Math.floor(chunkSize) || 10000),
@@ -400,7 +412,7 @@ export default function VanityApp() {
         const started = performance.now();
         const wantedPrefixLower = req.wantedPrefix.toLowerCase();
         const wantedSuffixLower = req.wantedSuffix.toLowerCase();
-        const addressPrefix: AddressPrefix = wantedPrefixLower.startsWith('txch1') ? 'txch' : 'xch';
+        const addressPrefix = req.addressPrefix;
         const limit = Math.max(
             1,
             Math.min(SAGE_PUBLIC_KEY_CHUNK_LIMIT, Math.floor(req.chunkSize) || SAGE_PUBLIC_KEY_CHUNK_LIMIT),
@@ -590,6 +602,7 @@ export default function VanityApp() {
                     </div>
 
                     <div style={styles.headerMeta}>
+                        <ThemeControl value={themeMode} onChange={setThemeMode} />
                         <div style={styles.statusPill}>
                             <span style={styles.statusDot} />
                             <span>{status}</span>
@@ -794,12 +807,28 @@ export default function VanityApp() {
                                                 ...(prefixValidationError ? styles.invalidInput : null),
                                             }}
                                         >
-                                            <span style={styles.prefixAdornment}>xch1</span>
+                                            <select
+                                                style={styles.prefixSelect}
+                                                value={wantedAddressPrefix}
+                                                onChange={(e) => setWantedAddressPrefix(e.target.value as AddressPrefix)}
+                                                aria-label="Address prefix"
+                                                disabled={inputsDisabled}
+                                            >
+                                                <option value="xch">xch1</option>
+                                                <option value="txch">txch1</option>
+                                            </select>
                                             <input
                                                 id="wanted-prefix"
                                                 style={styles.prefixedInput}
                                                 value={wantedPrefix}
-                                                onChange={(e) => setWantedPrefix(stripWantedPrefixInput(e.target.value))}
+                                                onChange={(e) => {
+                                                    const pastedAddressPrefix = addressPrefixFromWantedInput(e.target.value);
+                                                    if (pastedAddressPrefix) {
+                                                        setWantedAddressPrefix(pastedAddressPrefix);
+                                                    }
+
+                                                    setWantedPrefix(stripWantedPrefixInput(e.target.value));
+                                                }}
                                                 placeholder="ace"
                                                 aria-invalid={Boolean(prefixValidationError)}
                                                 disabled={inputsDisabled}
@@ -984,6 +1013,35 @@ export default function VanityApp() {
     );
 }
 
+function ThemeControl({
+    value,
+    onChange,
+}: {
+    value: ThemeMode;
+    onChange: (value: ThemeMode) => void;
+}) {
+    const options: ThemeMode[] = ['auto', 'light', 'dark'];
+
+    return (
+        <div style={styles.themeControl} aria-label="Theme">
+            {options.map((item) => (
+                <button
+                    key={item}
+                    style={{
+                        ...styles.themeButton,
+                        ...(value === item ? styles.themeButtonActive : null),
+                    }}
+                    onClick={() => onChange(item)}
+                    aria-pressed={value === item}
+                    type="button"
+                >
+                    {item[0].toUpperCase() + item.slice(1)}
+                </button>
+            ))}
+        </div>
+    );
+}
+
 function SegmentedControl({
     value,
     onChange,
@@ -1112,14 +1170,28 @@ function matchesWantedAddress(
     return true;
 }
 
-function wantedPrefixForSearch(value: string): string {
+function wantedPrefixForSearch(value: string, addressPrefix: AddressPrefix): string {
     const trimmed = value.trim().toLowerCase();
 
     if (trimmed.length === 0) {
         return '';
     }
 
-    return `xch1${trimmed}`;
+    return `${addressPrefix}1${trimmed}`;
+}
+
+function addressPrefixFromWantedInput(value: string): AddressPrefix | null {
+    const trimmed = value.trim().toLowerCase();
+
+    if (trimmed.startsWith('txch1')) {
+        return 'txch';
+    }
+
+    if (trimmed.startsWith('xch1')) {
+        return 'xch';
+    }
+
+    return null;
 }
 
 function stripWantedPrefixInput(value: string): string {
@@ -1169,8 +1241,8 @@ const styles: Record<string, React.CSSProperties> = {
     page: {
         minHeight: '100vh',
         margin: 0,
-        background: '#151513',
-        color: '#f3f0e8',
+        background: 'var(--page-bg)',
+        color: 'var(--text)',
         fontFamily:
             'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
     },
@@ -1199,7 +1271,7 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: 8,
         display: 'block',
         objectFit: 'cover',
-        boxShadow: '0 0 0 1px rgba(243, 240, 232, 0.12)',
+        boxShadow: '0 0 0 1px var(--panel-border)',
     },
     title: {
         margin: 0,
@@ -1216,7 +1288,7 @@ const styles: Record<string, React.CSSProperties> = {
         flexWrap: 'wrap',
     },
     titleDivider: {
-        color: '#615c52',
+        color: 'var(--text-faint)',
         fontSize: 18,
         fontWeight: 700,
         lineHeight: 1,
@@ -1233,7 +1305,7 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: 'center',
         gap: 7,
         minHeight: 28,
-        color: '#bdb6a7',
+        color: 'var(--text-soft)',
         fontSize: 13,
         fontWeight: 700,
         whiteSpace: 'nowrap',
@@ -1246,11 +1318,11 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'block',
         objectFit: 'cover',
         imageRendering: 'pixelated',
-        boxShadow: '0 0 0 1px rgba(243, 240, 232, 0.2)',
+        boxShadow: '0 0 0 1px var(--control-border)',
     },
     subtleLine: {
         marginTop: 5,
-        color: '#a7a194',
+        color: 'var(--text-muted)',
         fontSize: 12,
         lineHeight: 1.35,
     },
@@ -1261,9 +1333,9 @@ const styles: Record<string, React.CSSProperties> = {
         minHeight: 34,
         padding: '0 12px',
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.12)',
-        background: '#1f1f1b',
-        color: '#e9e2d0',
+        border: '1px solid var(--panel-border)',
+        background: 'var(--control-bg)',
+        color: 'var(--text-soft)',
         fontSize: 13,
         fontWeight: 650,
     },
@@ -1271,8 +1343,32 @@ const styles: Record<string, React.CSSProperties> = {
         width: 8,
         height: 8,
         borderRadius: 99,
-        background: '#41d6a3',
-        boxShadow: '0 0 0 3px rgba(65, 214, 163, 0.14)',
+        background: 'var(--accent)',
+        boxShadow: '0 0 0 3px var(--accent-soft)',
+    },
+    themeControl: {
+        display: 'inline-grid',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        padding: 3,
+        borderRadius: 8,
+        background: 'var(--control-bg-muted)',
+        border: '1px solid var(--divider)',
+    },
+    themeButton: {
+        height: 30,
+        minWidth: 52,
+        padding: '0 9px',
+        border: 0,
+        borderRadius: 6,
+        background: 'transparent',
+        color: 'var(--text-muted)',
+        fontSize: 12,
+        fontWeight: 750,
+        cursor: 'pointer',
+    },
+    themeButtonActive: {
+        background: 'var(--control-text)',
+        color: 'var(--panel-bg)',
     },
     flowStack: {
         display: 'grid',
@@ -1290,25 +1386,25 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 1,
         overflow: 'hidden',
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.1)',
-        background: 'rgba(243, 240, 232, 0.1)',
+        border: '1px solid var(--divider)',
+        background: 'var(--metric-grid-bg)',
     },
     metric: {
         display: 'grid',
         gap: 5,
         padding: '13px 14px',
-        background: '#1b1b18',
+        background: 'var(--metric-bg)',
         minWidth: 0,
     },
     metricLabel: {
-        color: '#8f897c',
+        color: 'var(--text-faint)',
         fontSize: 11,
         fontWeight: 700,
         textTransform: 'uppercase',
         letterSpacing: 0,
     },
     metricValue: {
-        color: '#f7f2e7',
+        color: 'var(--text-strong)',
         fontSize: 18,
         fontWeight: 760,
         lineHeight: 1.2,
@@ -1318,9 +1414,9 @@ const styles: Record<string, React.CSSProperties> = {
     panel: {
         padding: 18,
         borderRadius: 8,
-        background: '#20201c',
-        border: '1px solid rgba(243, 240, 232, 0.11)',
-        boxShadow: '0 18px 55px rgba(0, 0, 0, 0.24)',
+        background: 'var(--panel-bg)',
+        border: '1px solid var(--panel-border)',
+        boxShadow: 'var(--panel-shadow)',
         minWidth: 0,
     },
     panelHeader: {
@@ -1333,7 +1429,7 @@ const styles: Record<string, React.CSSProperties> = {
     },
     sectionTitle: {
         margin: 0,
-        color: '#fffaf0',
+        color: 'var(--text-strong)',
         fontSize: 15,
         fontWeight: 760,
         letterSpacing: 0,
@@ -1343,8 +1439,8 @@ const styles: Record<string, React.CSSProperties> = {
         gridTemplateColumns: '1fr 1fr',
         padding: 3,
         borderRadius: 8,
-        background: '#151513',
-        border: '1px solid rgba(243, 240, 232, 0.1)',
+        background: 'var(--control-bg-muted)',
+        border: '1px solid var(--divider)',
     },
     segmentButton: {
         height: 30,
@@ -1353,14 +1449,14 @@ const styles: Record<string, React.CSSProperties> = {
         border: 0,
         borderRadius: 6,
         background: 'transparent',
-        color: '#9f9888',
+        color: 'var(--text-muted)',
         fontSize: 12,
         fontWeight: 750,
         cursor: 'pointer',
     },
     segmentButtonActive: {
-        background: '#f3f0e8',
-        color: '#171714',
+        background: 'var(--control-text)',
+        color: 'var(--panel-bg)',
     },
     fieldFull: {
         display: 'grid',
@@ -1386,22 +1482,22 @@ const styles: Record<string, React.CSSProperties> = {
         minHeight: 66,
         padding: 12,
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.1)',
-        background: '#20201c',
-        color: '#f3f0e8',
+        border: '1px solid var(--panel-border)',
+        background: 'var(--panel-bg)',
+        color: 'var(--text)',
         textAlign: 'left',
         cursor: 'pointer',
     },
     choiceButtonActive: {
-        borderColor: 'rgba(215, 255, 102, 0.45)',
-        background: 'rgba(215, 255, 102, 0.08)',
+        borderColor: 'var(--primary-border)',
+        background: 'var(--primary-soft)',
     },
     choiceTitle: {
         fontSize: 13,
         fontWeight: 850,
     },
     choiceText: {
-        color: '#a7a194',
+        color: 'var(--text-muted)',
         fontSize: 12,
         lineHeight: 1.35,
     },
@@ -1411,8 +1507,8 @@ const styles: Record<string, React.CSSProperties> = {
         justifySelf: 'start',
         padding: 3,
         borderRadius: 8,
-        background: '#10100e',
-        border: '1px solid rgba(243, 240, 232, 0.1)',
+        background: 'var(--control-bg-muted)',
+        border: '1px solid var(--divider)',
         marginBottom: 12,
     },
     sourceButton: {
@@ -1421,14 +1517,14 @@ const styles: Record<string, React.CSSProperties> = {
         border: 0,
         borderRadius: 6,
         background: 'transparent',
-        color: '#9f9888',
+        color: 'var(--text-muted)',
         fontSize: 12,
         fontWeight: 800,
         cursor: 'pointer',
     },
     sourceButtonActive: {
-        background: '#f3f0e8',
-        color: '#171714',
+        background: 'var(--control-text)',
+        color: 'var(--panel-bg)',
     },
     formStack: {
         display: 'grid',
@@ -1453,9 +1549,9 @@ const styles: Record<string, React.CSSProperties> = {
         width: '100%',
         height: 48,
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.16)',
-        background: '#151513',
-        color: '#f6f0e3',
+        border: '1px solid var(--control-border)',
+        background: 'var(--control-bg)',
+        color: 'var(--control-text)',
         padding: '0 14px',
         boxSizing: 'border-box',
         outline: 'none',
@@ -1468,23 +1564,26 @@ const styles: Record<string, React.CSSProperties> = {
         width: '100%',
         height: 48,
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.16)',
-        background: '#151513',
+        border: '1px solid var(--control-border)',
+        background: 'var(--control-bg)',
         boxSizing: 'border-box',
         overflow: 'hidden',
     },
-    prefixAdornment: {
+    prefixSelect: {
         display: 'inline-flex',
         alignItems: 'center',
         alignSelf: 'stretch',
         padding: '0 12px 0 14px',
-        borderRight: '1px solid rgba(243, 240, 232, 0.11)',
-        color: '#a7a194',
-        background: '#1b1b18',
+        border: 0,
+        borderRight: '1px solid var(--divider)',
+        color: 'var(--text-muted)',
+        background: 'var(--control-bg-muted)',
         fontSize: 15,
         fontWeight: 800,
         fontFamily: monoStack,
         whiteSpace: 'nowrap',
+        outline: 'none',
+        cursor: 'pointer',
     },
     prefixedInput: {
         flex: 1,
@@ -1492,7 +1591,7 @@ const styles: Record<string, React.CSSProperties> = {
         height: '100%',
         border: 0,
         background: 'transparent',
-        color: '#f6f0e3',
+        color: 'var(--control-text)',
         padding: '0 14px',
         boxSizing: 'border-box',
         outline: 'none',
@@ -1500,11 +1599,11 @@ const styles: Record<string, React.CSSProperties> = {
         fontWeight: 650,
     },
     advancedDetails: {
-        borderTop: '1px solid rgba(243, 240, 232, 0.1)',
+        borderTop: '1px solid var(--divider)',
         paddingTop: 12,
     },
     advancedSummary: {
-        color: '#d6cfbf',
+        color: 'var(--text-soft)',
         fontSize: 13,
         fontWeight: 800,
         cursor: 'pointer',
@@ -1523,7 +1622,7 @@ const styles: Record<string, React.CSSProperties> = {
         minWidth: 0,
     },
     labelText: {
-        color: '#b1aa9c',
+        color: 'var(--text-muted)',
         fontSize: 12,
         fontWeight: 700,
     },
@@ -1531,9 +1630,9 @@ const styles: Record<string, React.CSSProperties> = {
         width: '100%',
         minHeight: 112,
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.13)',
-        background: '#151513',
-        color: '#f6f0e3',
+        border: '1px solid var(--control-border)',
+        background: 'var(--control-bg)',
+        color: 'var(--control-text)',
         padding: '12px 13px',
         resize: 'vertical',
         boxSizing: 'border-box',
@@ -1545,25 +1644,25 @@ const styles: Record<string, React.CSSProperties> = {
         width: '100%',
         height: 40,
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.13)',
-        background: '#151513',
-        color: '#f6f0e3',
+        border: '1px solid var(--control-border)',
+        background: 'var(--control-bg)',
+        color: 'var(--control-text)',
         padding: '0 12px',
         boxSizing: 'border-box',
         outline: 'none',
         fontSize: 13,
     },
     invalidInput: {
-        borderColor: '#e06464',
-        boxShadow: '0 0 0 2px rgba(224, 100, 100, 0.16)',
+        borderColor: 'var(--danger-text)',
+        boxShadow: '0 0 0 2px var(--danger-soft)',
     },
     fieldError: {
-        color: '#ff9f9f',
+        color: 'var(--danger-text)',
         fontSize: 12,
         lineHeight: 1.35,
     },
     formError: {
-        color: '#ffb2a8',
+        color: 'var(--danger-text)',
         fontSize: 13,
         lineHeight: 1.45,
     },
@@ -1581,11 +1680,11 @@ const styles: Record<string, React.CSSProperties> = {
         marginTop: 12,
         padding: 10,
         borderRadius: 8,
-        border: '1px solid rgba(65, 214, 163, 0.16)',
-        background: 'rgba(65, 214, 163, 0.06)',
+        border: '1px solid var(--accent-border)',
+        background: 'var(--accent-soft)',
     },
     sageKeyLabel: {
-        color: '#93f1d3',
+        color: 'var(--accent-text)',
         fontSize: 12,
         fontWeight: 750,
         overflowWrap: 'anywhere',
@@ -1595,9 +1694,9 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 9,
         padding: 12,
         borderRadius: 8,
-        border: '1px solid rgba(255, 189, 89, 0.24)',
-        background: 'rgba(255, 189, 89, 0.08)',
-        color: '#ffe0ae',
+        border: '1px solid var(--warning-border)',
+        background: 'var(--warning-bg)',
+        color: 'var(--warning-text)',
         fontSize: 13,
         lineHeight: 1.45,
     },
@@ -1605,9 +1704,9 @@ const styles: Record<string, React.CSSProperties> = {
         justifySelf: 'start',
         height: 34,
         borderRadius: 8,
-        border: '1px solid rgba(255, 189, 89, 0.28)',
-        background: '#2d2619',
-        color: '#ffe0ae',
+        border: '1px solid var(--warning-border)',
+        background: 'var(--warning-button-bg)',
+        color: 'var(--warning-text)',
         padding: '0 12px',
         fontSize: 12,
         fontWeight: 850,
@@ -1617,9 +1716,9 @@ const styles: Record<string, React.CSSProperties> = {
         height: 40,
         minWidth: 112,
         borderRadius: 8,
-        border: '1px solid rgba(215, 255, 102, 0.25)',
-        background: '#d7ff66',
-        color: '#12120f',
+        border: '1px solid var(--primary-border)',
+        background: 'var(--primary-bg)',
+        color: 'var(--primary-text)',
         padding: '0 16px',
         fontSize: 13,
         fontWeight: 800,
@@ -1629,9 +1728,9 @@ const styles: Record<string, React.CSSProperties> = {
         height: 40,
         minWidth: 86,
         borderRadius: 8,
-        border: '1px solid rgba(243, 240, 232, 0.13)',
-        background: '#292921',
-        color: '#f3f0e8',
+        border: '1px solid var(--control-border)',
+        background: 'var(--control-bg-muted)',
+        color: 'var(--text)',
         padding: '0 15px',
         fontSize: 13,
         fontWeight: 760,
@@ -1649,13 +1748,13 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'grid',
         gap: 10,
         paddingBottom: 14,
-        borderBottom: '1px solid rgba(243, 240, 232, 0.1)',
+        borderBottom: '1px solid var(--divider)',
     },
     resultMeta: {
         display: 'flex',
         justifyContent: 'space-between',
         gap: 10,
-        color: '#b3ab9b',
+        color: 'var(--text-muted)',
         fontSize: 12,
         fontWeight: 750,
         textTransform: 'capitalize',
@@ -1664,16 +1763,16 @@ const styles: Record<string, React.CSSProperties> = {
         fontFamily: monoStack,
         fontSize: 13,
         lineHeight: 1.55,
-        color: '#f7f2e7',
+        color: 'var(--text-strong)',
         overflowWrap: 'anywhere',
     },
     copyButton: {
         justifySelf: 'start',
         height: 32,
         borderRadius: 8,
-        border: '1px solid rgba(65, 214, 163, 0.26)',
-        background: 'rgba(65, 214, 163, 0.12)',
-        color: '#93f1d3',
+        border: '1px solid var(--accent-border)',
+        background: 'var(--accent-soft)',
+        color: 'var(--accent-text)',
         padding: '0 12px',
         fontSize: 12,
         fontWeight: 800,
@@ -1684,8 +1783,8 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'grid',
         placeItems: 'center',
         borderRadius: 8,
-        border: '1px dashed rgba(243, 240, 232, 0.16)',
-        color: '#8f897c',
+        border: '1px dashed var(--control-border)',
+        color: 'var(--text-faint)',
         fontSize: 13,
     },
     errorBox: {
@@ -1693,8 +1792,8 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 6,
         marginTop: 16,
         paddingTop: 14,
-        borderTop: '1px solid rgba(224, 100, 100, 0.28)',
-        color: '#ffb2a8',
+        borderTop: '1px solid var(--danger-border)',
+        color: 'var(--danger-text)',
         fontSize: 13,
         lineHeight: 1.45,
     },

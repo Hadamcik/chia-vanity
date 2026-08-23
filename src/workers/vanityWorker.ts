@@ -22,6 +22,7 @@ interface StartPayload {
     mnemonic: string;
     masterSecretKey: string;
     masterPublicKey: string;
+    addressPrefix: 'xch' | 'txch';
     wantedPrefix: string;
     wantedSuffix: string;
     startIndex: number;
@@ -322,7 +323,7 @@ async function runSearch(payload: StartPayload) {
 
     const wantedPrefixLower = payload.wantedPrefix.toLowerCase();
     const wantedSuffixLower = payload.wantedSuffix.toLowerCase();
-    const prefix = wantedPrefixLower.startsWith('txch1') ? 'txch' : 'xch';
+    const prefix = payload.addressPrefix;
 
     const root = payload.mode === 'unhardened'
         ? {

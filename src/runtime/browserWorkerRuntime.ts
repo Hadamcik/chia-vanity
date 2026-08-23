@@ -209,6 +209,7 @@ function postStartToWorker(
             mnemonic: req.mnemonic,
             masterSecretKey: req.masterSecretKey,
             masterPublicKey: req.masterPublicKey,
+            addressPrefix: req.addressPrefix,
             wantedPrefix: req.wantedPrefix,
             wantedSuffix: req.wantedSuffix,
             startIndex,
