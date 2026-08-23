@@ -28,7 +28,6 @@
       ],
       "optional": [
         "wallet.get_key",
-        "wallet.get_public_keys",
         "wallet.get_secret_key"
       ]
     }
