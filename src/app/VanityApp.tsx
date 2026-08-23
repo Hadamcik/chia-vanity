@@ -26,6 +26,8 @@ const WALLET_KEY_CAPABILITY = 'wallet.get_key';
 const WALLET_PUBLIC_KEYS_CAPABILITY = 'wallet.get_public_keys';
 const WALLET_SECRET_CAPABILITY = 'wallet.get_secret_key';
 const SAGE_PUBLIC_KEY_CHUNK_LIMIT = 1000;
+// Temporarily off until Sage supports active-wallet key grants without app-provided fingerprints.
+const SAGE_KEY_IMPORT_ENABLED = false;
 interface SageKeyMaterial {
     fingerprint: number;
     name: string;
@@ -240,7 +242,8 @@ export default function VanityApp() {
     const hardenedSelected = mode === 'hardened' || mode === 'both';
     const inputsDisabled = uiState !== 'idle' || deriving;
     const isSage = hostInfo !== null;
-    const activeCredentialSource: CredentialSource = isSage ? credentialSource : 'manual';
+    const canImportFromSage = isSage && SAGE_KEY_IMPORT_ENABLED;
+    const activeCredentialSource: CredentialSource = canImportFromSage ? credentialSource : 'manual';
     const isSagePublicSource =
         isSage && activeCredentialSource === 'sage' && credentialKind === 'public';
     const canUsePublicCredential = mode === 'unhardened';
@@ -753,7 +756,7 @@ export default function VanityApp() {
                             </div>
                         </div>
 
-                        {isSage ? (
+                        {canImportFromSage ? (
                             <div style={styles.sourceSwitch}>
                                 <button
                                     style={{
@@ -791,12 +794,12 @@ export default function VanityApp() {
                                     {loadingSageKey
                                         ? 'Checking'
                                         : hasSageKeyPermission
-                                            ? 'Use Sage public keys'
-                                            : 'Grant and use Sage public keys'}
+                                            ? 'Use selected wallet'
+                                            : 'Grant and use selected wallet'}
                                 </button>
                                 {sagePublicKeysReady ? (
                                     <div style={styles.sageKeyLabel}>
-                                        Sage wallet · derived public keys
+                                        Selected wallet ready
                                     </div>
                                 ) : null}
                             </div>
