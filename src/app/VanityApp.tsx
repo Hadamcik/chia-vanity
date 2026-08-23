@@ -603,10 +603,6 @@ export default function VanityApp() {
 
                     <div style={styles.headerMeta}>
                         <ThemeControl value={themeMode} onChange={setThemeMode} />
-                        <div style={styles.statusPill}>
-                            <span style={styles.statusDot} />
-                            <span>{status}</span>
-                        </div>
                     </div>
                 </header>
 
@@ -1020,26 +1016,73 @@ function ThemeControl({
     value: ThemeMode;
     onChange: (value: ThemeMode) => void;
 }) {
-    const options: ThemeMode[] = ['auto', 'light', 'dark'];
+    const options: Array<{ value: ThemeMode; label: string }> = [
+        { value: 'auto', label: 'Auto theme' },
+        { value: 'light', label: 'Light theme' },
+        { value: 'dark', label: 'Dark theme' },
+    ];
 
     return (
         <div style={styles.themeControl} aria-label="Theme">
             {options.map((item) => (
                 <button
-                    key={item}
+                    key={item.value}
                     style={{
                         ...styles.themeButton,
-                        ...(value === item ? styles.themeButtonActive : null),
+                        ...(value === item.value ? styles.themeButtonActive : null),
                     }}
-                    onClick={() => onChange(item)}
-                    aria-pressed={value === item}
+                    onClick={() => onChange(item.value)}
+                    aria-label={item.label}
+                    title={item.label}
+                    aria-pressed={value === item.value}
                     type="button"
                 >
-                    {item[0].toUpperCase() + item.slice(1)}
+                    {item.value === 'auto' ? 'Auto' : <ThemeIcon value={item.value} />}
                 </button>
             ))}
         </div>
     );
+}
+
+function ThemeIcon({ value }: { value: ThemeMode }) {
+    const common = {
+        width: 16,
+        height: 16,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 2,
+        strokeLinecap: 'round' as const,
+        strokeLinejoin: 'round' as const,
+        'aria-hidden': true,
+        focusable: false,
+    };
+
+    if (value === 'light') {
+        return (
+            <svg {...common}>
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2" />
+                <path d="M12 20v2" />
+                <path d="m4.93 4.93 1.41 1.41" />
+                <path d="m17.66 17.66 1.41 1.41" />
+                <path d="M2 12h2" />
+                <path d="M20 12h2" />
+                <path d="m6.34 17.66-1.41 1.41" />
+                <path d="m19.07 4.93-1.41 1.41" />
+            </svg>
+        );
+    }
+
+    if (value === 'dark') {
+        return (
+            <svg {...common}>
+                <path d="M20.3 14.7A8 8 0 0 1 9.3 3.7a7 7 0 1 0 11 11Z" />
+            </svg>
+        );
+    }
+
+    return null;
 }
 
 function SegmentedControl({
@@ -1326,26 +1369,6 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 12,
         lineHeight: 1.35,
     },
-    statusPill: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 8,
-        minHeight: 34,
-        padding: '0 12px',
-        borderRadius: 8,
-        border: '1px solid var(--panel-border)',
-        background: 'var(--control-bg)',
-        color: 'var(--text-soft)',
-        fontSize: 13,
-        fontWeight: 650,
-    },
-    statusDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 99,
-        background: 'var(--accent)',
-        boxShadow: '0 0 0 3px var(--accent-soft)',
-    },
     themeControl: {
         display: 'inline-grid',
         gridTemplateColumns: 'repeat(3, 1fr)',
@@ -1355,9 +1378,11 @@ const styles: Record<string, React.CSSProperties> = {
         border: '1px solid var(--divider)',
     },
     themeButton: {
+        display: 'grid',
+        placeItems: 'center',
         height: 30,
-        minWidth: 52,
-        padding: '0 9px',
+        minWidth: 42,
+        padding: '0 8px',
         border: 0,
         borderRadius: 6,
         background: 'transparent',
