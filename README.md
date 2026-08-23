@@ -80,6 +80,14 @@ pnpm build:cloudflare
 
 Set the build output directory to `dist`.
 
+If your Cloudflare project also has a deploy command, use:
+
+```bash
+npx wrangler deploy
+```
+
+The checked-in `wrangler.jsonc` points Wrangler at the already-built `dist` assets so it does not rerun `pnpm build`.
+
 Inside Sage, use **Load Sage key** to fill the current wallet master public key for public-key-only unhardened searches. Use **Load Sage private key** only when you need hardened derivation.
 
 ---
