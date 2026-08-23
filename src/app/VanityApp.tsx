@@ -675,13 +675,13 @@ export default function VanityApp() {
                                 rel="noreferrer"
                                 aria-label="by fancy budgie"
                             >
+                                <span>by Fancy Budgie</span>
                                 <img
                                     style={styles.authorAvatar}
                                     src="/fancy-budgie-avatar.png"
                                     alt=""
                                     aria-hidden="true"
                                 />
-                                <span>by fancy budgie</span>
                             </a>
                         </div>
                     </div>
