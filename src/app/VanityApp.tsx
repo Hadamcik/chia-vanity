@@ -64,7 +64,7 @@ export default function VanityApp() {
     const [results, setResults] = useState<Array<SearchHitPayload | DeriveAddressPayload>>([]);
     const [resultLabel, setResultLabel] = useState('No result yet');
     const [error, setError] = useState('');
-    const [status, setStatus] = useState('Idle');
+    const [, setStatus] = useState('Idle');
     const [sageKey, setSageKey] = useState<SageKeyMaterial | null>(null);
     const [sagePublicKeysReady, setSagePublicKeysReady] = useState(false);
     const [sageCapabilities, setSageCapabilities] = useState<string[]>([]);
@@ -73,6 +73,8 @@ export default function VanityApp() {
     const [allowUnsafeMnemonicPaste, setAllowUnsafeMnemonicPaste] = useState(false);
     const [themeMode, setThemeMode] = useState<ThemeMode>('auto');
     const sageSearchCancelRef = useRef(false);
+    const searchStartedAtRef = useRef<number | null>(null);
+    const manualStopRequestedRef = useRef(false);
 
     useLayoutEffect(() => {
         if (themeMode === 'auto') {
@@ -180,6 +182,17 @@ export default function VanityApp() {
             });
 
             unlistenCompleted = await runtime.onSearchCompleted((event) => {
+                finishSearchElapsed();
+
+                if (manualStopRequestedRef.current) {
+                    manualStopRequestedRef.current = false;
+                    setResults([]);
+                    setResultLabel('No result yet');
+                    setStatus('Stopped');
+                    setUiState('idle');
+                    return;
+                }
+
                 setResults(event.hit ? [event.hit] : []);
                 setResultLabel(event.hit ? 'Search match' : 'No match found');
                 setStatus(event.hit ? 'Match found' : 'No match found');
@@ -187,7 +200,10 @@ export default function VanityApp() {
             });
 
             unlistenFailed = await runtime.onSearchFailed((event) => {
+                finishSearchElapsed();
+                manualStopRequestedRef.current = false;
                 setError(event.message);
+                setResultLabel('Search failed');
                 setStatus('Search failed');
                 setUiState('idle');
             });
@@ -220,6 +236,8 @@ export default function VanityApp() {
         }
     }, [credentialKind, mode]);
 
+    const unhardenedSelected = mode === 'unhardened' || mode === 'both';
+    const hardenedSelected = mode === 'hardened' || mode === 'both';
     const inputsDisabled = uiState !== 'idle' || deriving;
     const isSage = hostInfo !== null;
     const activeCredentialSource: CredentialSource = isSage ? credentialSource : 'manual';
@@ -259,6 +277,29 @@ export default function VanityApp() {
     ), [deriving, hasRequiredKeyMaterial, publicKeyValidationError, uiState]);
 
     const canStop = uiState === 'running';
+    const searchInProgress = workMode === 'search' && (uiState === 'running' || uiState === 'stopping');
+    const searchFinished = workMode === 'search' && uiState === 'idle' && (
+        results.length > 0 ||
+        resultLabel === 'No match found' ||
+        resultLabel === 'Search failed'
+    );
+    const derivationFinished = workMode === 'derive' && !deriving && (
+        results.length > 0 ||
+        resultLabel === 'Derive failed'
+    );
+    const showResultPanel = !searchInProgress && (searchFinished || derivationFinished);
+    const resultMetaLine = workMode === 'search' && elapsedSecs > 0
+        ? `${resultLabel} · elapsed ${elapsedSecs.toFixed(1)} s`
+        : resultLabel;
+
+    function finishSearchElapsed() {
+        if (searchStartedAtRef.current === null) {
+            return;
+        }
+
+        setElapsedSecs((performance.now() - searchStartedAtRef.current) / 1000);
+        searchStartedAtRef.current = null;
+    }
 
     async function handleStart() {
         if (patternValidationError) {
@@ -277,6 +318,8 @@ export default function VanityApp() {
         setStatus('Starting');
         setUiState('running');
         sageSearchCancelRef.current = false;
+        manualStopRequestedRef.current = false;
+        searchStartedAtRef.current = performance.now();
 
         const req: StartSearchRequest = {
             mnemonic: credentialKind === 'private' ? mnemonic.trim() : '',
@@ -300,7 +343,10 @@ export default function VanityApp() {
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            searchStartedAtRef.current = null;
+            manualStopRequestedRef.current = false;
             setError(message);
+            setResultLabel('Search failed');
             setStatus('Failed to start');
             setUiState('idle');
         }
@@ -309,15 +355,48 @@ export default function VanityApp() {
     async function handleStop() {
         try {
             sageSearchCancelRef.current = true;
+            manualStopRequestedRef.current = true;
             setUiState('stopping');
             setStatus('Stopping');
             await runtime.stopSearch();
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            manualStopRequestedRef.current = false;
             setError(message);
             setStatus('Failed to stop');
             setUiState('running');
         }
+    }
+
+    function handleKeyModeChange(kind: 'unhardened' | 'hardened', checked: boolean) {
+        let nextUnhardened = unhardenedSelected;
+        let nextHardened = hardenedSelected;
+
+        if (kind === 'unhardened') {
+            nextUnhardened = checked;
+        } else {
+            nextHardened = checked;
+        }
+
+        if (!nextUnhardened && !nextHardened) {
+            nextUnhardened = kind === 'hardened';
+            nextHardened = kind === 'unhardened';
+        }
+
+        const nextMode: Mode = nextUnhardened && nextHardened
+            ? 'both'
+            : nextUnhardened
+                ? 'unhardened'
+                : 'hardened';
+
+        setMode(nextMode);
+        setCredentialKind((previous) => {
+            if (nextMode === 'unhardened') {
+                return 'public';
+            }
+
+            return previous === 'public' ? 'private' : previous;
+        });
     }
 
     async function handleDerive() {
@@ -396,7 +475,7 @@ export default function VanityApp() {
         const publicKey = keys[0];
 
         if (!publicKey) {
-            throw new Error(`Sage did not return a public key for index ${index}.`);
+            throw new Error(`Sage did not return a public key for derivation ${index}.`);
         }
 
         return [{
@@ -422,6 +501,7 @@ export default function VanityApp() {
             const keys = await getSageDerivedPublicKeys(nextIndex, limit);
 
             if (keys.length === 0) {
+                finishSearchElapsed();
                 setResults([]);
                 setResultLabel('No match found');
                 setStatus('No match found');
@@ -431,6 +511,8 @@ export default function VanityApp() {
 
             for (let i = 0; i < keys.length; i += 1) {
                 if (sageSearchCancelRef.current) {
+                    finishSearchElapsed();
+                    manualStopRequestedRef.current = false;
                     setResultLabel('Search stopped');
                     setStatus('Stopped');
                     setUiState('idle');
@@ -458,6 +540,7 @@ export default function VanityApp() {
                 };
 
                 setResults([hit]);
+                finishSearchElapsed();
                 setResultLabel('Search match');
                 setStatus('Match found');
                 setUiState('idle');
@@ -467,6 +550,8 @@ export default function VanityApp() {
             nextIndex += keys.length;
         }
 
+        finishSearchElapsed();
+        manualStopRequestedRef.current = false;
         setResultLabel('Search stopped');
         setStatus('Stopped');
         setUiState('idle');
@@ -641,19 +726,31 @@ export default function VanityApp() {
                                 </button>
                             </div>
 
-                            <label style={styles.field}>
-                                <span style={styles.labelText}>Key mode</span>
-                                <select
-                                    style={styles.input}
-                                    value={mode}
-                                    onChange={(e) => setMode(e.target.value as Mode)}
-                                    disabled={inputsDisabled}
-                                >
-                                    <option value="unhardened">unhardened</option>
-                                    <option value="hardened">hardened</option>
-                                    <option value="both">both</option>
-                                </select>
-                            </label>
+                            <div style={styles.field}>
+                                <span style={styles.labelText}>Derivation mode</span>
+                                <div style={styles.checkboxRow}>
+                                    <label style={styles.checkboxOption}>
+                                        <input
+                                            style={styles.checkboxInput}
+                                            type="checkbox"
+                                            checked={unhardenedSelected}
+                                            onChange={(e) => handleKeyModeChange('unhardened', e.target.checked)}
+                                            disabled={inputsDisabled}
+                                        />
+                                        <span>Unhardened</span>
+                                    </label>
+                                    <label style={styles.checkboxOption}>
+                                        <input
+                                            style={styles.checkboxInput}
+                                            type="checkbox"
+                                            checked={hardenedSelected}
+                                            onChange={(e) => handleKeyModeChange('hardened', e.target.checked)}
+                                            disabled={inputsDisabled}
+                                        />
+                                        <span>Hardened</span>
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         {isSage ? (
@@ -782,7 +879,7 @@ export default function VanityApp() {
                         <div style={styles.panelHeader}>
                             <div>
                                 <h2 style={styles.sectionTitle}>
-                                    {workMode === 'search' ? 'Search settings' : 'Index settings'}
+                                    {workMode === 'search' ? 'Search settings' : 'Derivation settings'}
                                 </h2>
                             </div>
                             <SegmentedControl
@@ -862,12 +959,12 @@ export default function VanityApp() {
                                                 disabled={inputsDisabled}
                                             >
                                                 <option value="fast">fast</option>
-                                                <option value="lowest">lowest index</option>
+                                                <option value="lowest">lowest derivation</option>
                                             </select>
                                         </label>
 
                                         <NumberField
-                                            label="Start index"
+                                            label="Start derivation"
                                             value={startIndex}
                                             onChange={setStartIndex}
                                             disabled={inputsDisabled}
@@ -919,7 +1016,7 @@ export default function VanityApp() {
                             <div style={styles.formStack}>
                                 <div style={styles.formGrid}>
                                     <NumberField
-                                        label="Index"
+                                        label="Derivation"
                                         value={deriveIndex}
                                         onChange={setDeriveIndex}
                                         disabled={inputsDisabled}
@@ -956,28 +1053,26 @@ export default function VanityApp() {
                         )}
                     </section>
 
-                    <div style={styles.outputGrid}>
+                    {searchInProgress ? (
                         <section style={styles.panel}>
                             <div style={styles.panelHeader}>
-                                <div>
-                                    <h2 style={styles.sectionTitle}>Progress</h2>
-                                    <div style={styles.subtleLine}>{status}</div>
-                                </div>
+                                <h2 style={styles.sectionTitle}>Progress</h2>
                             </div>
 
                             <div style={styles.metricGrid}>
                                 <Metric label="Checked" value={checked.toLocaleString()} />
                                 <Metric label="Rate" value={`${formatNumber(ratePerSec)}/s`} />
                                 <Metric label="Elapsed" value={`${elapsedSecs.toFixed(1)} s`} />
-                                <Metric label="State" value={uiState} />
                             </div>
                         </section>
+                    ) : null}
 
+                    {showResultPanel ? (
                         <aside style={styles.panel}>
                             <div style={styles.panelHeader}>
                                 <div>
                                     <h2 style={styles.sectionTitle}>Result</h2>
-                                    <div style={styles.subtleLine}>{resultLabel}</div>
+                                    <div style={styles.subtleLine}>{resultMetaLine}</div>
                                 </div>
                             </div>
 
@@ -991,9 +1086,9 @@ export default function VanityApp() {
                                         />
                                     ))}
                                 </div>
-                            ) : (
-                                <div style={styles.emptyState}>Waiting for output</div>
-                            )}
+                            ) : !error ? (
+                                <div style={styles.emptyState}>{resultLabel}</div>
+                            ) : null}
 
                             {error ? (
                                 <div style={styles.errorBox}>
@@ -1002,7 +1097,7 @@ export default function VanityApp() {
                                 </div>
                             ) : null}
                         </aside>
-                    </div>
+                    ) : null}
                 </div>
             </div>
         </main>
@@ -1106,7 +1201,7 @@ function SegmentedControl({
                     onClick={() => onChange(item)}
                     disabled={disabled}
                 >
-                    {item === 'search' ? 'Search' : 'Index'}
+                    {item === 'search' ? 'Search' : 'Derivation'}
                 </button>
             ))}
         </div>
@@ -1168,7 +1263,7 @@ function ResultRow({
     return (
         <div style={styles.resultItem}>
             <div style={styles.resultMeta}>
-                <span>Index {item.index}</span>
+                <span>Derivation {item.index}</span>
                 <span>{item.mode}</span>
             </div>
             <div style={styles.addressLine}>{item.address}</div>
@@ -1399,12 +1494,6 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'grid',
         gap: 16,
     },
-    outputGrid: {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
-        gap: 16,
-        alignItems: 'start',
-    },
     metricGrid: {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
@@ -1525,6 +1614,35 @@ const styles: Record<string, React.CSSProperties> = {
         color: 'var(--text-muted)',
         fontSize: 12,
         lineHeight: 1.35,
+    },
+    checkboxRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+        minHeight: 40,
+    },
+    checkboxOption: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        minHeight: 34,
+        padding: '0 11px',
+        borderRadius: 8,
+        border: '1px solid var(--control-border)',
+        background: 'var(--control-bg-muted)',
+        color: 'var(--text)',
+        fontSize: 13,
+        fontWeight: 760,
+        cursor: 'pointer',
+        userSelect: 'none',
+    },
+    checkboxInput: {
+        width: 14,
+        height: 14,
+        margin: 0,
+        accentColor: 'var(--accent)',
+        cursor: 'pointer',
     },
     sourceSwitch: {
         display: 'inline-grid',
