@@ -72,6 +72,14 @@ pnpm build
 
 The build writes the Sage-ready app bundle to `dist/`, including `dist/sage-manifest.json`.
 
+For Cloudflare Pages, use the committed WASM package instead of rebuilding it:
+
+```bash
+pnpm build:cloudflare
+```
+
+Set the build output directory to `dist`.
+
 Inside Sage, use **Load Sage key** to fill the current wallet master public key for public-key-only unhardened searches. Use **Load Sage private key** only when you need hardened derivation.
 
 ---

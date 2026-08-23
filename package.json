@@ -7,6 +7,7 @@
     "prepare:wasm-local": "node scripts/prepare-local-wasm.mjs",
     "dev": "pnpm prepare:wasm-local && vite",
     "sage:finalize": "sage-app finalize-manifest --source sage-manifest.json --dist ./dist",
+    "build:cloudflare": "tsc && vite build && pnpm sage:finalize",
     "build": "pnpm prepare:wasm-local && tsc && vite build && pnpm sage:finalize",
     "tauri:dev": "pnpm build && tauri dev"
   },
