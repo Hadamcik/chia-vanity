@@ -64,14 +64,17 @@ export default function VanityApp() {
     const [error, setError] = useState('');
     const [, setStatus] = useState('Idle');
     const [sageKey, setSageKey] = useState<SageKeyMaterial | null>(null);
+    const [sageSecretFingerprint, setSageSecretFingerprint] = useState<number | null>(null);
     const [sagePublicKeysReady, setSagePublicKeysReady] = useState(false);
     const [sageCapabilities, setSageCapabilities] = useState<string[]>([]);
+    const [sageKeyMessage, setSageKeyMessage] = useState('');
     const [loadingSageKey, setLoadingSageKey] = useState(false);
     const [loadingSageSecret, setLoadingSageSecret] = useState(false);
     const [allowUnsafeMnemonicPaste, setAllowUnsafeMnemonicPaste] = useState(false);
     const [themeMode, setThemeMode] = useState<ThemeMode>('auto');
     const searchStartedAtRef = useRef<number | null>(null);
     const manualStopRequestedRef = useRef(false);
+    const sageAutoLoadKeyRef = useRef(false);
 
     useLayoutEffect(() => {
         if (themeMode === 'auto') {
@@ -147,10 +150,13 @@ export default function VanityApp() {
                     setSageKey(null);
                     setSagePublicKeysReady(false);
                     setMasterPublicKey('');
+                    setSageKeyMessage('');
                 }
 
                 if (!capabilities.includes(WALLET_SECRET_CAPABILITY)) {
                     setMasterSecretKey('');
+                    setMnemonic('');
+                    setSageSecretFingerprint(null);
                 }
             });
         };
@@ -237,7 +243,6 @@ export default function VanityApp() {
     const canImportFromSage = isSage && SAGE_KEY_IMPORT_ENABLED;
     const activeCredentialSource: CredentialSource = canImportFromSage ? credentialSource : 'manual';
     const canUsePublicCredential = mode === 'unhardened';
-    const hasSageKeyPermission = sageCapabilities.includes(WALLET_KEY_CAPABILITY);
     const hasSageSecretPermission = sageCapabilities.includes(WALLET_SECRET_CAPABILITY);
     const prefixValidationError = validateWantedPrefix(wantedPrefix);
     const suffixValidationError = validateWantedSuffix(wantedSuffix);
@@ -284,6 +289,91 @@ export default function VanityApp() {
     const resultMetaLine = workMode === 'search' && elapsedSecs > 0
         ? `${resultLabel} · elapsed ${elapsedSecs.toFixed(1)} s`
         : resultLabel;
+    const sageSecretWalletChanged =
+        activeCredentialSource === 'sage' &&
+        credentialKind === 'private' &&
+        sageSecretFingerprint !== null &&
+        sageKey !== null &&
+        sageKey.fingerprint !== sageSecretFingerprint;
+
+    useEffect(() => {
+        if (
+            !canImportFromSage ||
+            activeCredentialSource !== 'sage' ||
+            credentialKind !== 'public' ||
+            inputsDisabled ||
+            sagePublicKeysReady ||
+            loadingSageKey ||
+            sageAutoLoadKeyRef.current
+        ) {
+            return;
+        }
+
+        sageAutoLoadKeyRef.current = true;
+        void handleLoadSageKey().finally(() => {
+            sageAutoLoadKeyRef.current = false;
+        });
+    }, [
+        activeCredentialSource,
+        canImportFromSage,
+        credentialKind,
+        inputsDisabled,
+        loadingSageKey,
+        sagePublicKeysReady,
+    ]);
+
+    useEffect(() => {
+        if (!canImportFromSage || activeCredentialSource !== 'sage' || inputsDisabled) {
+            return;
+        }
+
+        let cancelled = false;
+
+        const syncSelectedWallet = async () => {
+            try {
+                const key = await getCurrentSageKey();
+                if (cancelled || !key) {
+                    return;
+                }
+
+                setSageKey((previous) => (
+                    previous?.fingerprint === key.fingerprint &&
+                    previous.publicKey === key.publicKey
+                        ? previous
+                        : key
+                ));
+
+                if (credentialKind === 'public') {
+                    setMasterPublicKey(key.publicKey);
+                    setSagePublicKeysReady(true);
+                    setSageKeyMessage(`${key.name} · ${key.fingerprint}`);
+                    return;
+                }
+
+                if (sageSecretFingerprint !== null && key.fingerprint !== sageSecretFingerprint) {
+                    setSageKeyMessage(
+                        `Selected wallet changed to ${key.name} · ${key.fingerprint}. Import private key again to use it.`,
+                    );
+                }
+            } catch {
+                // Wallet changes are opportunistic; explicit imports still surface errors.
+            }
+        };
+
+        void syncSelectedWallet();
+        const intervalId = window.setInterval(() => void syncSelectedWallet(), 2000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(intervalId);
+        };
+    }, [
+        activeCredentialSource,
+        canImportFromSage,
+        credentialKind,
+        inputsDisabled,
+        sageSecretFingerprint,
+    ]);
 
     function finishSearchElapsed() {
         if (searchStartedAtRef.current === null) {
@@ -436,24 +526,28 @@ export default function VanityApp() {
         }
     }
 
-    async function handleLoadSageKey() {
+    async function getCurrentSageKey(): Promise<SageKeyMaterial | null> {
         const candidate = runtime as {
             getSageKeyMaterial?: () => Promise<SageKeyMaterial | null>;
         };
 
+        if (typeof candidate.getSageKeyMaterial !== 'function') {
+            throw new Error('Sage bridge is not available.');
+        }
+
+        return await candidate.getSageKeyMaterial();
+    }
+
+    async function handleLoadSageKey() {
         setLoadingSageKey(true);
         setError('');
+        setSageKeyMessage('Requesting selected wallet from Sage...');
         setStatus('Checking Sage wallet key');
 
         try {
-            if (typeof candidate.getSageKeyMaterial !== 'function') {
-                setError('Sage bridge is not available.');
-                setStatus('Sage unavailable');
-                return;
-            }
-
-            const key = await candidate.getSageKeyMaterial();
+            const key = await getCurrentSageKey();
             if (!key) {
+                setSageKeyMessage('Sage key was not granted.');
                 setStatus('Sage key not granted');
                 return;
             }
@@ -462,9 +556,12 @@ export default function VanityApp() {
             setSagePublicKeysReady(true);
             setMasterPublicKey(key.publicKey);
             await refreshSageCapabilities();
+            setSageKeyMessage(`${key.name} · ${key.fingerprint}`);
             setStatus('Sage public key ready');
         } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            setSageKeyMessage(message);
             setStatus('Could not import public key');
         } finally {
             setLoadingSageKey(false);
@@ -473,7 +570,7 @@ export default function VanityApp() {
 
     async function handleLoadSageSecret() {
         const candidate = runtime as {
-            getSageSecretKey?: (fingerprint: number) => Promise<{
+            getSageSecretKey?: () => Promise<{
                 mnemonic: string | null;
                 secretKey: string;
             } | null>;
@@ -481,6 +578,7 @@ export default function VanityApp() {
 
         setLoadingSageSecret(true);
         setError('');
+        setSageKeyMessage('Requesting private key from Sage...');
         setStatus('Checking Sage wallet key');
 
         let activeKey = sageKey;
@@ -493,6 +591,7 @@ export default function VanityApp() {
 
                 if (typeof keyCandidate.getSageKeyMaterial !== 'function') {
                     setError('Sage bridge is not available.');
+                    setSageKeyMessage('Sage bridge is not available.');
                     setStatus('Sage unavailable');
                     setLoadingSageSecret(false);
                     return;
@@ -505,7 +604,9 @@ export default function VanityApp() {
                 }
             }
         } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            setSageKeyMessage(message);
             setStatus('Sage wallet key unavailable');
             setLoadingSageSecret(false);
             return;
@@ -513,6 +614,7 @@ export default function VanityApp() {
 
         if (!activeKey) {
             setError('Sage did not return a wallet fingerprint for secret-key approval.');
+            setSageKeyMessage('Sage did not return a wallet fingerprint for secret-key approval.');
             setStatus('Sage key needed');
             setLoadingSageSecret(false);
             return;
@@ -520,6 +622,7 @@ export default function VanityApp() {
 
         if (typeof candidate.getSageSecretKey !== 'function') {
             setError('Sage secret-key bridge is not available.');
+            setSageKeyMessage('Sage secret-key bridge is not available.');
             setStatus('Sage unavailable');
             setLoadingSageSecret(false);
             return;
@@ -528,7 +631,7 @@ export default function VanityApp() {
         setStatus('Requesting Sage secret');
 
         try {
-            const secret = await candidate.getSageSecretKey(activeKey.fingerprint);
+            const secret = await candidate.getSageSecretKey();
             if (!secret) {
                 setStatus('Secret not granted');
                 return;
@@ -539,10 +642,14 @@ export default function VanityApp() {
             }
 
             setMasterSecretKey(normalizeSecretKeyInput(secret.secretKey));
+            setSageSecretFingerprint(activeKey.fingerprint);
             await refreshSageCapabilities();
+            setSageKeyMessage(activeKey ? `${activeKey.name} · ${activeKey.fingerprint}` : 'Private key imported');
             setStatus(secret.mnemonic ? 'Sage mnemonic loaded' : 'Sage private key loaded');
         } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            setSageKeyMessage(message);
             setStatus('Could not import private key');
         } finally {
             setLoadingSageSecret(false);
@@ -670,24 +777,15 @@ export default function VanityApp() {
 
                         {activeCredentialSource === 'sage' && credentialKind === 'public' ? (
                             <div style={styles.sageActions}>
-                                <button
-                                    style={{
-                                        ...styles.secondaryButton,
-                                        ...(loadingSageKey ? styles.disabledButton : null),
-                                    }}
-                                    onClick={handleLoadSageKey}
-                                    disabled={inputsDisabled || loadingSageKey}
-                                >
-                                    {loadingSageKey
-                                        ? 'Checking'
-                                        : hasSageKeyPermission
-                                            ? 'Use selected wallet'
-                                            : 'Grant and use selected wallet'}
-                                </button>
-                                {sagePublicKeysReady ? (
-                                    <div style={styles.sageKeyLabel}>
-                                        Selected wallet ready
+                                {loadingSageKey ? (
+                                    <div style={styles.sageKeyLabel}>Checking selected wallet...</div>
+                                ) : null}
+                                {sageKeyMessage ? (
+                                    <div style={error ? styles.sageKeyError : styles.sageKeyLabel}>
+                                        {sageKeyMessage}
                                     </div>
+                                ) : sagePublicKeysReady ? (
+                                    <div style={styles.sageKeyLabel}>Selected wallet ready</div>
                                 ) : null}
                             </div>
                         ) : null}
@@ -704,6 +802,8 @@ export default function VanityApp() {
                                 >
                                     {loadingSageSecret
                                         ? 'Requesting'
+                                        : sageSecretWalletChanged
+                                            ? 'Import new private key'
                                         : hasSageSecretPermission
                                             ? 'Import private key'
                                             : 'Grant and import private key'}
@@ -711,6 +811,19 @@ export default function VanityApp() {
                                 {sageKey ? (
                                     <div style={styles.sageKeyLabel}>
                                         {sageKey.name} · {sageKey.fingerprint}
+                                    </div>
+                                ) : null}
+                                {sageKeyMessage ? (
+                                    <div
+                                        style={
+                                            sageSecretWalletChanged
+                                                ? styles.sageKeyWarning
+                                                : error
+                                                    ? styles.sageKeyError
+                                                    : styles.sageKeyLabel
+                                        }
+                                    >
+                                        {sageKeyMessage}
                                     </div>
                                 ) : null}
                             </div>
@@ -1700,6 +1813,18 @@ const styles: Record<string, React.CSSProperties> = {
     },
     sageKeyLabel: {
         color: 'var(--accent-text)',
+        fontSize: 12,
+        fontWeight: 750,
+        overflowWrap: 'anywhere',
+    },
+    sageKeyError: {
+        color: 'var(--danger-text)',
+        fontSize: 12,
+        fontWeight: 750,
+        overflowWrap: 'anywhere',
+    },
+    sageKeyWarning: {
+        color: 'var(--warning-text)',
         fontSize: 12,
         fontWeight: 750,
         overflowWrap: 'anywhere',

@@ -122,13 +122,13 @@ export const sageRuntime = {
         return host.onCapabilitiesChange(cb);
     },
 
-    async getSageSecretKey(fingerprint: number) {
+    async getSageSecretKey() {
         const host = getSageHost();
         if (!host) {
             throw new Error('Sage host bridge is not available');
         }
 
-        const secret = await host.getSecretKey(fingerprint);
+        const secret = await host.getSecretKey();
         if (!secret) {
             return null;
         }

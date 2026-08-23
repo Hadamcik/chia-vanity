@@ -28,7 +28,7 @@ export interface SageHostBridge {
     requestCapabilityGrant(capability: UserBridgeCapability): Promise<boolean>;
     getKey(): Promise<KeyInfo | null>;
     getPublicKeys(offset: number, limit: number, hardened: boolean): Promise<string[]>;
-    getSecretKey(fingerprint: number): Promise<SecretKeyInfo | null>;
+    getSecretKey(): Promise<SecretKeyInfo | null>;
 }
 
 async function currentStorageInfo(): Promise<SageStorageInfo> {
@@ -143,9 +143,10 @@ export function getSageHost(): SageHostBridge | null {
             }
 
             const client = await getSageClient();
-            const response = await client.wallet.getKey({
-                fingerprint: null,
-            });
+            const wallet = client.wallet as unknown as {
+                getKey: () => Promise<unknown>;
+            };
+            const response = await wallet.getKey();
 
             return unwrapSageKeyResponse(response);
         },
@@ -164,16 +165,17 @@ export function getSageHost(): SageHostBridge | null {
             });
         },
 
-        async getSecretKey(fingerprint) {
+        async getSecretKey() {
             const allowed = await ensureCapability('wallet.get_secret_key');
             if (!allowed) {
                 return null;
             }
 
             const client = await getSageClient();
-            const response = await client.wallet.getSecretKey({
-                fingerprint,
-            });
+            const wallet = client.wallet as unknown as {
+                getSecretKey: () => Promise<unknown>;
+            };
+            const response = await wallet.getSecretKey();
 
             return unwrapSageSecretResponse(response);
         },
