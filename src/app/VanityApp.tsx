@@ -13,7 +13,6 @@ import {
     validateWantedPrefix,
     validateWantedSuffix,
 } from '../lib/vanityValidation';
-import { addressForPublicKeyHex } from '../lib/publicKeyAddress';
 
 type WorkMode = 'search' | 'derive';
 type AddressPrefix = 'xch' | 'txch';
@@ -23,11 +22,8 @@ type ThemeMode = 'auto' | 'light' | 'dark';
 
 const MAX_INDEX = 0xffffffff;
 const WALLET_KEY_CAPABILITY = 'wallet.get_key';
-const WALLET_PUBLIC_KEYS_CAPABILITY = 'wallet.get_public_keys';
 const WALLET_SECRET_CAPABILITY = 'wallet.get_secret_key';
-const SAGE_PUBLIC_KEY_CHUNK_LIMIT = 1000;
-// Temporarily off until Sage supports active-wallet key grants without app-provided fingerprints.
-const SAGE_KEY_IMPORT_ENABLED = false;
+const SAGE_KEY_IMPORT_ENABLED = true;
 interface SageKeyMaterial {
     fingerprint: number;
     name: string;
@@ -74,7 +70,6 @@ export default function VanityApp() {
     const [loadingSageSecret, setLoadingSageSecret] = useState(false);
     const [allowUnsafeMnemonicPaste, setAllowUnsafeMnemonicPaste] = useState(false);
     const [themeMode, setThemeMode] = useState<ThemeMode>('auto');
-    const sageSearchCancelRef = useRef(false);
     const searchStartedAtRef = useRef<number | null>(null);
     const manualStopRequestedRef = useRef(false);
 
@@ -148,13 +143,10 @@ export default function VanityApp() {
             unsubscribe = await candidate.onSageCapabilitiesChange((capabilities) => {
                 setSageCapabilities(capabilities);
 
-                if (!capabilities.includes(WALLET_PUBLIC_KEYS_CAPABILITY)) {
-                    setSagePublicKeysReady(false);
-                    setMasterPublicKey('');
-                }
-
                 if (!capabilities.includes(WALLET_KEY_CAPABILITY)) {
                     setSageKey(null);
+                    setSagePublicKeysReady(false);
+                    setMasterPublicKey('');
                 }
 
                 if (!capabilities.includes(WALLET_SECRET_CAPABILITY)) {
@@ -244,16 +236,14 @@ export default function VanityApp() {
     const isSage = hostInfo !== null;
     const canImportFromSage = isSage && SAGE_KEY_IMPORT_ENABLED;
     const activeCredentialSource: CredentialSource = canImportFromSage ? credentialSource : 'manual';
-    const isSagePublicSource =
-        isSage && activeCredentialSource === 'sage' && credentialKind === 'public';
     const canUsePublicCredential = mode === 'unhardened';
-    const hasSageKeyPermission = sageCapabilities.includes(WALLET_PUBLIC_KEYS_CAPABILITY);
+    const hasSageKeyPermission = sageCapabilities.includes(WALLET_KEY_CAPABILITY);
     const hasSageSecretPermission = sageCapabilities.includes(WALLET_SECRET_CAPABILITY);
     const prefixValidationError = validateWantedPrefix(wantedPrefix);
     const suffixValidationError = validateWantedSuffix(wantedSuffix);
     const patternValidationError = validateWantedPatterns(wantedPrefix, wantedSuffix);
     const publicKeyValidationError =
-        credentialKind === 'public' && mode === 'unhardened' && !isSagePublicSource
+        credentialKind === 'public' && mode === 'unhardened'
             ? validateMasterPublicKey(masterPublicKey)
             : null;
     const hasMnemonic = mnemonic.trim().length > 0;
@@ -262,7 +252,7 @@ export default function VanityApp() {
         masterPublicKey.trim().length > 0 && !publicKeyValidationError;
     const hasRequiredKeyMaterial =
         credentialKind === 'public'
-            ? canUsePublicCredential && (isSagePublicSource ? sagePublicKeysReady : hasValidPublicKey)
+            ? canUsePublicCredential && hasValidPublicKey
             : hasMnemonic || hasSecretKey;
     const canStart = useMemo(() => (
         hasRequiredKeyMaterial &&
@@ -320,7 +310,6 @@ export default function VanityApp() {
         setElapsedSecs(0);
         setStatus('Starting');
         setUiState('running');
-        sageSearchCancelRef.current = false;
         manualStopRequestedRef.current = false;
         searchStartedAtRef.current = performance.now();
 
@@ -339,11 +328,7 @@ export default function VanityApp() {
         };
 
         try {
-            if (isSagePublicSource) {
-                await runSagePublicSearch(req);
-            } else {
-                await runtime.startSearch(req);
-            }
+            await runtime.startSearch(req);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             searchStartedAtRef.current = null;
@@ -357,7 +342,6 @@ export default function VanityApp() {
 
     async function handleStop() {
         try {
-            sageSearchCancelRef.current = true;
             manualStopRequestedRef.current = true;
             setUiState('stopping');
             setStatus('Stopping');
@@ -411,16 +395,14 @@ export default function VanityApp() {
         setDeriving(true);
 
         try {
-            const derived = isSagePublicSource
-                ? await deriveSagePublicAddress(clampU32(deriveIndex), derivePrefix)
-                : await runtime.deriveAddresses({
-                    mnemonic: credentialKind === 'private' ? mnemonic.trim() : '',
-                    masterSecretKey: credentialKind === 'private' ? normalizeSecretKeyInput(masterSecretKey) : '',
-                    masterPublicKey: credentialKind === 'public' ? normalizePublicKeyInput(masterPublicKey) : '',
-                    index: clampU32(deriveIndex),
-                    mode,
-                    addressPrefix: derivePrefix,
-                });
+            const derived = await runtime.deriveAddresses({
+                mnemonic: credentialKind === 'private' ? mnemonic.trim() : '',
+                masterSecretKey: credentialKind === 'private' ? normalizeSecretKeyInput(masterSecretKey) : '',
+                masterPublicKey: credentialKind === 'public' ? normalizePublicKeyInput(masterPublicKey) : '',
+                index: clampU32(deriveIndex),
+                mode,
+                addressPrefix: derivePrefix,
+            });
             setResults(derived);
             setResultLabel('Derived address');
             setStatus('Derived');
@@ -454,131 +436,36 @@ export default function VanityApp() {
         }
     }
 
-    async function getSageDerivedPublicKeys(offset: number, limit: number): Promise<string[]> {
+    async function handleLoadSageKey() {
         const candidate = runtime as {
-            getSageDerivedPublicKeys?: (
-                offset: number,
-                limit: number,
-                hardened?: boolean,
-            ) => Promise<string[]>;
+            getSageKeyMaterial?: () => Promise<SageKeyMaterial | null>;
         };
 
-        if (typeof candidate.getSageDerivedPublicKeys !== 'function') {
-            throw new Error('Sage public-key bridge is not available.');
-        }
-
-        return await candidate.getSageDerivedPublicKeys(offset, limit, false);
-    }
-
-    async function deriveSagePublicAddress(
-        index: number,
-        addressPrefix: AddressPrefix,
-    ): Promise<DeriveAddressPayload[]> {
-        const keys = await getSageDerivedPublicKeys(index, 1);
-        const publicKey = keys[0];
-
-        if (!publicKey) {
-            throw new Error(`Sage did not return a public key for derivation ${index}.`);
-        }
-
-        return [{
-            index,
-            mode: 'unhardened',
-            address: await addressForPublicKeyHex(publicKey, addressPrefix),
-        }];
-    }
-
-    async function runSagePublicSearch(req: StartSearchRequest) {
-        let nextIndex = clampU32(req.startIndex);
-        let checkedCount = 0;
-        const started = performance.now();
-        const wantedPrefixLower = req.wantedPrefix.toLowerCase();
-        const wantedSuffixLower = req.wantedSuffix.toLowerCase();
-        const addressPrefix = req.addressPrefix;
-        const limit = Math.max(
-            1,
-            Math.min(SAGE_PUBLIC_KEY_CHUNK_LIMIT, Math.floor(req.chunkSize) || SAGE_PUBLIC_KEY_CHUNK_LIMIT),
-        );
-
-        while (!sageSearchCancelRef.current && nextIndex <= MAX_INDEX) {
-            const keys = await getSageDerivedPublicKeys(nextIndex, limit);
-
-            if (keys.length === 0) {
-                finishSearchElapsed();
-                setResults([]);
-                setResultLabel('No match found');
-                setStatus('No match found');
-                setUiState('idle');
-                return;
-            }
-
-            for (let i = 0; i < keys.length; i += 1) {
-                if (sageSearchCancelRef.current) {
-                    finishSearchElapsed();
-                    manualStopRequestedRef.current = false;
-                    setResultLabel('Search stopped');
-                    setStatus('Stopped');
-                    setUiState('idle');
-                    return;
-                }
-
-                const index = nextIndex + i;
-                const address = await addressForPublicKeyHex(keys[i], addressPrefix);
-                checkedCount += 1;
-
-                const elapsed = (performance.now() - started) / 1000;
-                setChecked(checkedCount);
-                setRatePerSec(elapsed > 0 ? checkedCount / elapsed : 0);
-                setElapsedSecs(elapsed);
-                setStatus('Searching');
-
-                if (!matchesWantedAddress(address, wantedPrefixLower, wantedSuffixLower)) {
-                    continue;
-                }
-
-                const hit = {
-                    index,
-                    mode: 'unhardened' as const,
-                    address,
-                };
-
-                setResults([hit]);
-                finishSearchElapsed();
-                setResultLabel('Search match');
-                setStatus('Match found');
-                setUiState('idle');
-                return;
-            }
-
-            nextIndex += keys.length;
-        }
-
-        finishSearchElapsed();
-        manualStopRequestedRef.current = false;
-        setResultLabel('Search stopped');
-        setStatus('Stopped');
-        setUiState('idle');
-    }
-
-    async function handleLoadSageKey() {
         setLoadingSageKey(true);
         setError('');
-        setStatus('Checking Sage public keys');
+        setStatus('Checking Sage wallet key');
 
         try {
-            const keys = await getSageDerivedPublicKeys(0, 1);
-            if (keys.length === 0) {
-                setStatus('No Sage public keys');
+            if (typeof candidate.getSageKeyMaterial !== 'function') {
+                setError('Sage bridge is not available.');
+                setStatus('Sage unavailable');
                 return;
             }
 
+            const key = await candidate.getSageKeyMaterial();
+            if (!key) {
+                setStatus('Sage key not granted');
+                return;
+            }
+
+            setSageKey(key);
             setSagePublicKeysReady(true);
-            setMasterPublicKey('');
+            setMasterPublicKey(key.publicKey);
             await refreshSageCapabilities();
-            setStatus('Sage public keys ready');
+            setStatus('Sage public key ready');
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
-            setStatus('Could not use Sage public keys');
+            setStatus('Could not import public key');
         } finally {
             setLoadingSageKey(false);
         }
@@ -1291,24 +1178,6 @@ function normalizePublicKeyInput(value: string): string {
 
 function normalizeSecretKeyInput(value: string): string {
     return value.trim().toLowerCase().replace(/^0x/, '');
-}
-
-function matchesWantedAddress(
-    address: string,
-    wantedPrefixLower: string,
-    wantedSuffixLower: string,
-): boolean {
-    const addressLower = address.toLowerCase();
-
-    if (wantedPrefixLower.length > 0 && !addressLower.startsWith(wantedPrefixLower)) {
-        return false;
-    }
-
-    if (wantedSuffixLower.length > 0 && !addressLower.endsWith(wantedSuffixLower)) {
-        return false;
-    }
-
-    return true;
 }
 
 function wantedPrefixForSearch(value: string, addressPrefix: AddressPrefix): string {
