@@ -1103,6 +1103,18 @@ export default function VanityApp() {
                     ) : null}
                 </div>
             </div>
+
+            <footer style={styles.footer}>
+                <div style={styles.footerMeta}>
+                    <img
+                        style={styles.compatMark}
+                        src="/sage-logo.png"
+                        alt=""
+                        aria-hidden="true"
+                    />
+                    <span style={styles.compatText}>Compatible</span>
+                </div>
+            </footer>
         </main>
     );
 }
@@ -1382,6 +1394,8 @@ const styles: Record<string, React.CSSProperties> = {
     page: {
         minHeight: '100vh',
         margin: 0,
+        display: 'flex',
+        flexDirection: 'column',
         background: 'var(--page-bg)',
         color: 'var(--text)',
         fontFamily:
@@ -1390,7 +1404,8 @@ const styles: Record<string, React.CSSProperties> = {
     shell: {
         width: 'min(1180px, calc(100vw - 32px))',
         margin: '0 auto',
-        padding: '24px 0',
+        padding: '24px 0 28px',
+        flex: '1 0 auto',
     },
     header: {
         display: 'flex',
@@ -1496,6 +1511,44 @@ const styles: Record<string, React.CSSProperties> = {
     flowStack: {
         display: 'grid',
         gap: 16,
+    },
+    footer: {
+        position: 'sticky',
+        bottom: 0,
+        zIndex: 20,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 12,
+        width: '100%',
+        boxSizing: 'border-box',
+        padding: '12px max(18px, calc((100vw - 1180px) / 2 + 18px))',
+        borderRadius: 0,
+        background: '#0f100d',
+        color: '#f6f0e4',
+        borderTop: '1px solid #1d2118',
+        boxShadow: '0 -10px 30px rgba(0, 0, 0, 0.18)',
+        flexWrap: 'wrap',
+    },
+    footerMeta: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+    },
+    compatMark: {
+        width: 28,
+        height: 28,
+        borderRadius: 8,
+        display: 'block',
+        objectFit: 'cover',
+        boxShadow: 'inset 0 0 0 1px rgba(83, 244, 174, 0.18)',
+    },
+    compatText: {
+        color: '#f6f0e4',
+        fontSize: 13,
+        fontWeight: 820,
+        whiteSpace: 'nowrap',
     },
     metricGrid: {
         display: 'grid',
