@@ -14,6 +14,10 @@ const {
 
 type SecretKeyInstance = InstanceType<typeof chiaWalletSdk.SecretKey>;
 type PublicKeyInstance = InstanceType<typeof chiaWalletSdk.PublicKey>;
+type RootKeys = {
+    masterSk: SecretKeyInstance | null;
+    masterPk: PublicKeyInstance | null;
+};
 
 type Mode = 'hardened' | 'unhardened' | 'both';
 type SearchMode = 'fast' | 'lowest';
@@ -91,13 +95,29 @@ async function ensureInit() {
 
 function standardAddressForPk(publicKey: PublicKeyInstance, prefix: string): string {
     const syntheticPk = publicKey.deriveSynthetic();
-    const puzzleHash = standardPuzzleHash(syntheticPk);
-    const address = new Address(puzzleHash, prefix);
-    return address.encode();
+
+    try {
+        const puzzleHash = standardPuzzleHash(syntheticPk);
+        const address = new Address(puzzleHash, prefix);
+
+        try {
+            return address.encode();
+        } finally {
+            address.free();
+        }
+    } finally {
+        syntheticPk.free();
+    }
 }
 
 function standardAddressForSk(secretKey: SecretKeyInstance, prefix: string): string {
-    return standardAddressForPk(secretKey.publicKey(), prefix);
+    const publicKey = secretKey.publicKey();
+
+    try {
+        return standardAddressForPk(publicKey, prefix);
+    } finally {
+        publicKey.free();
+    }
 }
 
 function deriveUnhardenedPkForIndex(
@@ -126,6 +146,7 @@ function publicKeyFromHex(value: string): PublicKeyInstance {
     const publicKey = PublicKey.fromBytes(fromHex(normalized));
 
     if (!publicKey.isValid() || publicKey.isInfinity()) {
+        publicKey.free();
         throw new Error('master public key is invalid');
     }
 
@@ -134,8 +155,13 @@ function publicKeyFromHex(value: string): PublicKeyInstance {
 
 function masterSecretKeyFromMnemonic(mnemonicPhrase: string): SecretKeyInstance {
     const mnemonic = new Mnemonic(mnemonicPhrase);
-    const seed = mnemonic.toSeed('');
-    return SecretKey.fromSeed(seed);
+
+    try {
+        const seed = mnemonic.toSeed('');
+        return SecretKey.fromSeed(seed);
+    } finally {
+        mnemonic.free();
+    }
 }
 
 function masterSecretKeyFromHex(value: string): SecretKeyInstance {
@@ -179,14 +205,61 @@ function masterPublicKeyFromPayload(payload: {
     const secretKeyHex = normalizePublicKeyHex(payload.masterSecretKey);
 
     if (secretKeyHex.length > 0) {
-        return masterSecretKeyFromHex(secretKeyHex).publicKey();
+        const secretKey = masterSecretKeyFromHex(secretKeyHex);
+
+        try {
+            return secretKey.publicKey();
+        } finally {
+            secretKey.free();
+        }
     }
 
     if (payload.mnemonic.trim().length === 0) {
         throw new Error('mnemonic, master secret key, or master public key is required for unhardened mode');
     }
 
-    return masterSecretKeyFromMnemonic(payload.mnemonic).publicKey();
+    const secretKey = masterSecretKeyFromMnemonic(payload.mnemonic);
+
+    try {
+        return secretKey.publicKey();
+    } finally {
+        secretKey.free();
+    }
+}
+
+function rootKeysFromPayload(payload: {
+    mnemonic: string;
+    masterSecretKey: string;
+    masterPublicKey: string;
+    mode: Mode;
+}): RootKeys {
+    if (payload.mode === 'unhardened') {
+        return {
+            masterSk: null,
+            masterPk: masterPublicKeyFromPayload(payload),
+        };
+    }
+
+    const masterSk = masterSecretKeyFromPayload(payload);
+
+    if (payload.mode === 'hardened') {
+        return { masterSk, masterPk: null };
+    }
+
+    try {
+        return {
+            masterSk,
+            masterPk: masterSk.publicKey(),
+        };
+    } catch (error) {
+        masterSk.free();
+        throw error;
+    }
+}
+
+function freeRootKeys(root: RootKeys) {
+    root.masterPk?.free();
+    root.masterSk?.free();
 }
 
 function deriveHardenedSkForIndex(
@@ -202,10 +275,7 @@ function deriveHardenedSkForIndex(
 }
 
 function deriveCandidatesForIndex(
-    root: {
-        masterSk: SecretKeyInstance | null;
-        masterPk: PublicKeyInstance | null;
-    },
+    root: RootKeys,
     index: number,
     mode: Mode,
     prefix: string,
@@ -217,18 +287,21 @@ function deriveCandidatesForIndex(
     }> = [];
 
     if (mode === 'unhardened' || mode === 'both') {
-        const masterPk = root.masterPk ?? root.masterSk?.publicKey();
-
-        if (!masterPk) {
+        if (!root.masterPk) {
             throw new Error('mnemonic or master public key is required for unhardened mode');
         }
 
-        const publicKey = deriveUnhardenedPkForIndex(masterPk, index);
-        out.push({
-            index,
-            mode: 'unhardened',
-            address: standardAddressForPk(publicKey, prefix),
-        });
+        const publicKey = deriveUnhardenedPkForIndex(root.masterPk, index);
+
+        try {
+            out.push({
+                index,
+                mode: 'unhardened',
+                address: standardAddressForPk(publicKey, prefix),
+            });
+        } finally {
+            publicKey.free();
+        }
     }
 
     if (mode === 'hardened' || mode === 'both') {
@@ -237,11 +310,16 @@ function deriveCandidatesForIndex(
         }
 
         const secretKey = deriveHardenedSkForIndex(root.masterSk, index);
-        out.push({
-            index,
-            mode: 'hardened',
-            address: standardAddressForSk(secretKey, prefix),
-        });
+
+        try {
+            out.push({
+                index,
+                mode: 'hardened',
+                address: standardAddressForSk(secretKey, prefix),
+            });
+        } finally {
+            secretKey.free();
+        }
     }
 
     return out;
@@ -325,77 +403,69 @@ async function runSearch(payload: StartPayload) {
     const wantedSuffixLower = payload.wantedSuffix.toLowerCase();
     const prefix = payload.addressPrefix;
 
-    const root = payload.mode === 'unhardened'
-        ? {
-            masterSk: null,
-            masterPk: masterPublicKeyFromPayload(payload),
-        }
-        : {
-            masterSk: masterSecretKeyFromPayload(payload),
-            masterPk: null,
-        };
+    const root = rootKeysFromPayload(payload);
 
-    let bestHit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null = null;
+    try {
+        let bestHit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null = null;
 
-    const endIndex = payload.endIndex ?? 0xffffffff;
+        const endIndex = payload.endIndex ?? 0xffffffff;
 
-    for (let index = payload.startIndex; index <= endIndex; index += payload.step) {
-        if (
-            shouldStop ||
-            (cancelView !== null && Atomics.load(cancelView, 0) === 1)
-        ) {
-            flushProgress(true);
-            postMessage({ type: 'stopped' } satisfies WorkerResponse);
-            return;
-        }
-
-        const candidates = deriveCandidatesForIndex(root, index, payload.mode, prefix);
-        checkedSinceLastReport += candidates.length;
-
-        for (const candidate of candidates) {
-            if (!matchesWantedAddress(candidate.address, wantedPrefixLower, wantedSuffixLower)) {
-                continue;
-            }
-
-            if (payload.searchMode === 'fast') {
+        for (let index = payload.startIndex; index <= endIndex; index += payload.step) {
+            if (
+                shouldStop ||
+                (cancelView !== null && Atomics.load(cancelView, 0) === 1)
+            ) {
                 flushProgress(true);
-                postMessage({ type: 'hit', payload: candidate } satisfies WorkerResponse);
+                postMessage({ type: 'stopped' } satisfies WorkerResponse);
                 return;
             }
 
-            if (isBetterHit(candidate, bestHit)) {
-                bestHit = candidate;
+            const candidates = deriveCandidatesForIndex(root, index, payload.mode, prefix);
+            checkedSinceLastReport += candidates.length;
+
+            for (const candidate of candidates) {
+                if (!matchesWantedAddress(candidate.address, wantedPrefixLower, wantedSuffixLower)) {
+                    continue;
+                }
+
+                if (payload.searchMode === 'fast') {
+                    flushProgress(true);
+                    postMessage({ type: 'hit', payload: candidate } satisfies WorkerResponse);
+                    return;
+                }
+
+                if (isBetterHit(candidate, bestHit)) {
+                    bestHit = candidate;
+                }
             }
+
+            flushProgress();
         }
 
-        flushProgress();
+        flushProgress(true);
+        postMessage({ type: 'done', payload: { hit: bestHit } } satisfies WorkerResponse);
+    } finally {
+        freeRootKeys(root);
     }
-
-    flushProgress(true);
-    postMessage({ type: 'done', payload: { hit: bestHit } } satisfies WorkerResponse);
 }
 
 async function runDerive(payload: DerivePayload) {
     await ensureInit();
 
-    const root = payload.mode === 'unhardened'
-        ? {
-            masterSk: null,
-            masterPk: masterPublicKeyFromPayload(payload),
-        }
-        : {
-            masterSk: masterSecretKeyFromPayload(payload),
-            masterPk: null,
-        };
+    const root = rootKeysFromPayload(payload);
 
-    const candidates = deriveCandidatesForIndex(
-        root,
-        payload.index,
-        payload.mode,
-        payload.addressPrefix,
-    );
+    try {
+        const candidates = deriveCandidatesForIndex(
+            root,
+            payload.index,
+            payload.mode,
+            payload.addressPrefix,
+        );
 
-    postMessage({ type: 'derived', payload: candidates } satisfies WorkerResponse);
+        postMessage({ type: 'derived', payload: candidates } satisfies WorkerResponse);
+    } finally {
+        freeRootKeys(root);
+    }
 }
 
 self.onmessage = (event: MessageEvent<WorkerMessage>) => {
