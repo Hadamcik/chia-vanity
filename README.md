@@ -94,9 +94,11 @@ Inside Sage, use **Load Sage key** for public-key-only unhardened searches throu
 
 The browser app exposes separate CPU and GPU checkboxes next to the search target. Both are selected by default so compatible unhardened searches use their combined throughput:
 
-- CPU and GPU workers receive disjoint index stripes, so they never duplicate successful work.
+- CPU and GPU workers receive disjoint index ranges, so they never duplicate successful work.
+- Fast hybrid auto mode starts at about 47% of the browser-reported logical threads, then tunes the live CPU worker count up or down from stabilized aggregate-rate samples. Workers draw bounded ranges from a shared coordinator, so adjustment does not skip or duplicate indexes. An explicit CPU worker count still disables tuning and overrides the automatic value.
+- The progress panel shows the current tuning phase and sample count, then keeps the optimized worker count and best measured rate visible once tuning settles.
 - Unchecking the only selected engine switches to the other engine when it is available. Unavailable engines are disabled with an explanation in the UI.
-- If WebGPU is unavailable or fails while both engines are selected, a CPU worker takes over the GPU stripe without leaving a gap.
+- If WebGPU is unavailable or fails while both engines are selected, CPU workers take over its unfinished range without leaving a gap.
 - GPU-only search keeps one bounded 4,096-address batch in flight and supports unhardened derivation.
 - Every GPU match is re-derived and checked with the canonical CPU Chia wallet SDK before it is shown.
 - Hardened searches use the CPU. Sage's public-key bridge also uses the CPU because it supplies already-derived public keys rather than an account public key; importing a private key or entering key material manually supports the normal GPU path.

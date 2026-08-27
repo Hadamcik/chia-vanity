@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { runtime } from '../runtime';
 import type {
+    CpuTuningPayload,
     DeriveAddressPayload,
     Mode,
     SearchHitPayload,
@@ -65,6 +66,8 @@ export default function VanityApp() {
     const [checked, setChecked] = useState(0);
     const [ratePerSec, setRatePerSec] = useState(0);
     const [elapsedSecs, setElapsedSecs] = useState(0);
+    const [activeCpuWorkers, setActiveCpuWorkers] = useState<number | null>(null);
+    const [cpuTuning, setCpuTuning] = useState<CpuTuningPayload | null>(null);
     const [results, setResults] = useState<Array<SearchHitPayload | DeriveAddressPayload>>([]);
     const [resultLabel, setResultLabel] = useState('No result yet');
     const [error, setError] = useState('');
@@ -181,6 +184,12 @@ export default function VanityApp() {
                 setChecked(event.checked);
                 setRatePerSec(event.ratePerSec);
                 setElapsedSecs(event.elapsedSecs);
+                if (event.cpuWorkers !== undefined) {
+                    setActiveCpuWorkers(event.cpuWorkers);
+                }
+                if (event.cpuTuning !== undefined) {
+                    setCpuTuning(event.cpuTuning);
+                }
                 setStatus('Searching');
                 setUiState((prev) => (prev === 'stopping' ? prev : 'running'));
             });
@@ -342,6 +351,8 @@ export default function VanityApp() {
         setChecked(0);
         setRatePerSec(0);
         setElapsedSecs(0);
+        setActiveCpuWorkers(null);
+        setCpuTuning(null);
         setStatus('Starting');
         setUiState('running');
         sageSearchCancelRef.current = false;
@@ -1081,7 +1092,7 @@ export default function VanityApp() {
                                         />
 
                                         <NumberField
-                                            label="CPU workers"
+                                            label="CPU workers (0 = auto)"
                                             value={workerCount}
                                             onChange={setWorkerCount}
                                             disabled={inputsDisabled || !effectiveCpuSearchEnabled}
@@ -1173,7 +1184,24 @@ export default function VanityApp() {
                                 <Metric label="Checked" value={checked.toLocaleString()} />
                                 <Metric label="Rate" value={`${formatNumber(ratePerSec)}/s`} />
                                 <Metric label="Elapsed" value={`${elapsedSecs.toFixed(1)} s`} />
+                                {activeCpuWorkers !== null ? (
+                                    <Metric label="CPU workers" value={activeCpuWorkers.toLocaleString()} />
+                                ) : null}
                             </div>
+                            {cpuTuning ? (
+                                <div style={styles.tuningStatus}>
+                                    <span
+                                        style={{
+                                            ...styles.tuningDot,
+                                            ...(cpuTuning.phase === 'optimized'
+                                                ? styles.tuningDotOptimized
+                                                : null),
+                                        }}
+                                        aria-hidden="true"
+                                    />
+                                    <span>{formatCpuTuning(cpuTuning)}</span>
+                                </div>
+                            ) : null}
                         </section>
                     ) : null}
 
@@ -1494,6 +1522,33 @@ function formatNumber(value: number): string {
     return value.toFixed(0);
 }
 
+function formatCpuTuning(tuning: CpuTuningPayload): string {
+    const sampleProgress = tuning.sample > 0
+        ? ` · sample ${Math.min(tuning.sample, tuning.maxSamples)} of up to ${tuning.maxSamples}`
+        : '';
+
+    if (tuning.phase === 'stabilizing') {
+        return `Auto-tuning: stabilizing ${tuning.workers} CPU workers${sampleProgress}`;
+    }
+
+    if (tuning.phase === 'testing-more') {
+        return `Auto-tuning: testing ${tuning.workers} CPU workers${sampleProgress}`;
+    }
+
+    if (tuning.phase === 'testing-fewer') {
+        return `Auto-tuning: testing ${tuning.workers} CPU workers${sampleProgress}`;
+    }
+
+    if (tuning.phase === 'gpu-fallback') {
+        return `GPU became unavailable; continuing with ${tuning.workers} CPU workers.`;
+    }
+
+    const measuredRate = tuning.bestRatePerSec !== undefined
+        ? ` · best measured ${formatNumber(tuning.bestRatePerSec)}/s`
+        : '';
+    return `Auto-tuning complete: optimized at ${tuning.workers} CPU workers${measuredRate}`;
+}
+
 const monoStack =
     'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace';
 
@@ -1687,6 +1742,31 @@ const styles: Record<string, React.CSSProperties> = {
         lineHeight: 1.2,
         overflowWrap: 'anywhere',
         textTransform: 'capitalize',
+    },
+    tuningStatus: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        marginTop: 12,
+        padding: '10px 12px',
+        borderRadius: 8,
+        border: '1px solid var(--divider)',
+        background: 'var(--control-bg-muted)',
+        color: 'var(--text-muted)',
+        fontSize: 12,
+        lineHeight: 1.45,
+    },
+    tuningDot: {
+        width: 8,
+        height: 8,
+        flex: '0 0 auto',
+        borderRadius: '50%',
+        background: 'var(--warning-text)',
+        boxShadow: '0 0 0 3px var(--warning-bg)',
+    },
+    tuningDotOptimized: {
+        background: 'var(--accent-text)',
+        boxShadow: '0 0 0 3px var(--accent-soft)',
     },
     panel: {
         padding: 18,

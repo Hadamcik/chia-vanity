@@ -37,6 +37,7 @@ interface StartPayload {
     mode: Mode;
     searchMode: SearchMode;
     engine: SearchEngine;
+    keepAlive?: boolean;
     reportEvery: number;
     cancelBuffer: SharedArrayBuffer | null;
 }
@@ -105,6 +106,12 @@ let initialized = false;
 let shouldStop = false;
 let webGpuInitialized = false;
 let webGpuModule: typeof import('../../vendor-pkg/webgpu-vanity-wasm/webgpu_vanity_wasm.js') | null = null;
+let reusableCpuRoot: { key: string; root: RootKeys } | null = null;
+let reusableGpuContext: {
+    key: string;
+    root: RootKeys;
+    searcher: GpuSearcher;
+} | null = null;
 
 async function ensureInit() {
     if (!initialized) {
@@ -265,6 +272,31 @@ function masterPublicKeyFromPayload(payload: {
     } finally {
         secretKey.free();
     }
+}
+
+function searchKey(payload: StartPayload): string {
+    return [
+        payload.mnemonic,
+        payload.masterSecretKey,
+        payload.masterPublicKey,
+        payload.mode,
+    ].join('\u0000');
+}
+
+function cpuRootForSearch(payload: StartPayload): { root: RootKeys; reusable: boolean } {
+    if (!payload.keepAlive) {
+        return { root: rootKeysFromPayload(payload), reusable: false };
+    }
+
+    const key = searchKey(payload);
+    if (reusableCpuRoot?.key !== key) {
+        if (reusableCpuRoot) {
+            freeRootKeys(reusableCpuRoot.root);
+        }
+        reusableCpuRoot = { key, root: rootKeysFromPayload(payload) };
+    }
+
+    return { root: reusableCpuRoot.root, reusable: true };
 }
 
 function rootKeysFromPayload(payload: {
@@ -456,7 +488,7 @@ async function runCpuSearch(payload: StartPayload) {
     const wantedSuffixLower = payload.wantedSuffix.toLowerCase();
     const prefix = payload.addressPrefix;
 
-    const root = rootKeysFromPayload(payload);
+    const { root, reusable } = cpuRootForSearch(payload);
 
     try {
         let bestHit: { index: number; mode: 'hardened' | 'unhardened'; address: string } | null = null;
@@ -498,7 +530,9 @@ async function runCpuSearch(payload: StartPayload) {
         flushProgress(true);
         postMessage({ type: 'done', payload: { hit: bestHit } } satisfies WorkerResponse);
     } finally {
-        freeRootKeys(root);
+        if (!reusable) {
+            freeRootKeys(root);
+        }
     }
 }
 
@@ -523,10 +557,32 @@ async function createGpuSearchContext(payload: StartPayload): Promise<{
     }
 }
 
+async function gpuContextForSearch(payload: StartPayload): Promise<{
+    root: RootKeys;
+    searcher: GpuSearcher;
+    reusable: boolean;
+}> {
+    if (!payload.keepAlive) {
+        return { ...(await createGpuSearchContext(payload)), reusable: false };
+    }
+
+    const key = searchKey(payload);
+    if (reusableGpuContext?.key !== key) {
+        if (reusableGpuContext) {
+            reusableGpuContext.searcher.free();
+            freeRootKeys(reusableGpuContext.root);
+        }
+        reusableGpuContext = { key, ...(await createGpuSearchContext(payload)) };
+    }
+
+    return { ...reusableGpuContext, reusable: true };
+}
+
 async function runGpuSearch(
     payload: StartPayload,
     root: RootKeys,
     searcher: GpuSearcher,
+    reusable: boolean,
 ) {
     const cancelView = payload.cancelBuffer
         ? new Int32Array(payload.cancelBuffer)
@@ -613,8 +669,10 @@ async function runGpuSearch(
 
         postMessage({ type: 'done', payload: { hit: null } } satisfies WorkerResponse);
     } finally {
-        searcher.free();
-        freeRootKeys(root);
+        if (!reusable) {
+            searcher.free();
+            freeRootKeys(root);
+        }
     }
 }
 
@@ -632,9 +690,9 @@ async function runSearch(payload: StartPayload) {
         throw new Error('GPU search currently supports unhardened mode only');
     }
 
-    let context: Awaited<ReturnType<typeof createGpuSearchContext>>;
+    let context: Awaited<ReturnType<typeof gpuContextForSearch>>;
     try {
-        context = await createGpuSearchContext(payload);
+        context = await gpuContextForSearch(payload);
     } catch (error) {
         if (payload.engine === 'auto') {
             await runCpuSearch(payload);
@@ -643,7 +701,7 @@ async function runSearch(payload: StartPayload) {
         throw error;
     }
 
-    await runGpuSearch(payload, context.root, context.searcher);
+    await runGpuSearch(payload, context.root, context.searcher, context.reusable);
 }
 
 async function runDerive(payload: DerivePayload) {
