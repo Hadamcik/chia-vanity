@@ -26,6 +26,14 @@ type WorkerDonePayload = {
     hit: SearchHitPayload | null;
 };
 
+type WorkerSearchEngine = 'cpu' | 'gpu';
+
+type SearchWorkerPlan = {
+    engine: WorkerSearchEngine;
+    offset: number;
+    allowCpuFallback: boolean;
+};
+
 const MAX_INDEX = 0xffffffff;
 
 const listeners: ListenerMap = {
@@ -146,6 +154,14 @@ function normalWorkerCount(requested: number): number {
         : Math.max(1, navigator.hardwareConcurrency || 1);
 }
 
+function hybridCpuWorkerCount(requested: number): number {
+    if (requested > 0) {
+        return requested;
+    }
+
+    return Math.max(1, normalWorkerCount(0) - 1);
+}
+
 function normalChunkSize(requested: number): number {
     if (!Number.isFinite(requested) || requested <= 0) {
         return 10000;
@@ -158,9 +174,17 @@ function hasWebGpu(): boolean {
     return typeof navigator !== 'undefined' && 'gpu' in navigator;
 }
 
-function shouldUseGpu(req: StartSearchRequest): boolean {
+function cpuWorkerPlans(workerCount: number): SearchWorkerPlan[] {
+    return Array.from({ length: workerCount }, (_, offset) => ({
+        engine: 'cpu',
+        offset,
+        allowCpuFallback: false,
+    }));
+}
+
+function buildWorkerPlans(req: StartSearchRequest): SearchWorkerPlan[] {
     if (req.engine === 'cpu') {
-        return false;
+        return cpuWorkerPlans(normalWorkerCount(req.workerCount));
     }
 
     if (req.engine === 'gpu') {
@@ -170,10 +194,32 @@ function shouldUseGpu(req: StartSearchRequest): boolean {
         if (!hasWebGpu()) {
             throw new Error('WebGPU is not available in this browser');
         }
-        return true;
+        return [{ engine: 'gpu', offset: 0, allowCpuFallback: false }];
     }
 
-    return req.mode === 'unhardened' && hasWebGpu();
+    const gpuAvailable = req.mode === 'unhardened' && hasWebGpu();
+
+    if (req.engine === 'hybrid') {
+        if (!gpuAvailable) {
+            return cpuWorkerPlans(normalWorkerCount(req.workerCount));
+        }
+
+        const cpuCount = hybridCpuWorkerCount(req.workerCount);
+        return [
+            { engine: 'gpu', offset: 0, allowCpuFallback: true },
+            ...Array.from({ length: cpuCount }, (_, index) => ({
+                engine: 'cpu' as const,
+                offset: index + 1,
+                allowCpuFallback: false,
+            })),
+        ];
+    }
+
+    if (gpuAvailable) {
+        return [{ engine: 'gpu', offset: 0, allowCpuFallback: false }];
+    }
+
+    return cpuWorkerPlans(normalWorkerCount(req.workerCount));
 }
 
 function normalizePublicKeyHex(value: string): string {
@@ -224,6 +270,7 @@ function postStartToWorker(
     startIndex: number,
     endIndex: number | null,
     step: number,
+    engine: WorkerSearchEngine,
 ) {
     worker.postMessage({
         type: 'start',
@@ -239,32 +286,72 @@ function postStartToWorker(
             step,
             mode: req.mode,
             searchMode: req.searchMode,
-            engine: req.engine,
+            engine,
             reportEvery: 1000,
             cancelBuffer: cancelView?.buffer ?? null,
         },
     });
 }
 
-function startFastSearch(req: StartSearchRequest, workerCount: number, runId: number) {
-    pendingWorkers = workerCount;
+function removeWorker(worker: Worker) {
+    const index = workers.indexOf(worker);
+    if (index >= 0) {
+        workers.splice(index, 1);
+    }
+}
 
-    for (let workerId = 0; workerId < workerCount; workerId += 1) {
+function startFastSearch(
+    req: StartSearchRequest,
+    workerPlans: SearchWorkerPlan[],
+    runId: number,
+) {
+    const step = workerPlans.length;
+    pendingWorkers = step;
+
+    const startWorker = (plan: SearchWorkerPlan, startIndex: number) => {
         const worker = createWorker();
+        let checkedByWorker = 0;
+        let settled = false;
+
+        const handleFailure = (message: string) => {
+            if (settled || !running || runId !== activeRunId) {
+                return;
+            }
+
+            if (plan.engine === 'gpu' && plan.allowCpuFallback) {
+                settled = true;
+                worker.terminate();
+                removeWorker(worker);
+                try {
+                    startWorker(
+                        { ...plan, engine: 'cpu', allowCpuFallback: false },
+                        startIndex + checkedByWorker * step,
+                    );
+                } catch (error) {
+                    fail(error instanceof Error ? error.message : String(error));
+                }
+                return;
+            }
+
+            fail(message);
+        };
 
         worker.onmessage = (event: MessageEvent<any>) => {
-            if (!running || runId !== activeRunId) {
+            if (settled || !running || runId !== activeRunId) {
                 return;
             }
 
             const msg = event.data;
 
             if (msg.type === 'progress') {
-                emitProgress(Number(msg.payload.checked) || 0);
+                const checked = Number(msg.payload.checked) || 0;
+                checkedByWorker += checked;
+                emitProgress(checked);
                 return;
             }
 
             if (msg.type === 'hit') {
+                settled = true;
                 if (cancelView) {
                     Atomics.store(cancelView, 0, 1);
                 }
@@ -274,6 +361,7 @@ function startFastSearch(req: StartSearchRequest, workerCount: number, runId: nu
             }
 
             if (msg.type === 'stopped' || msg.type === 'done') {
+                settled = true;
                 pendingWorkers -= 1;
                 if (pendingWorkers <= 0 && running) {
                     finish({ hit: null });
@@ -282,23 +370,30 @@ function startFastSearch(req: StartSearchRequest, workerCount: number, runId: nu
             }
 
             if (msg.type === 'error') {
-                fail(msg.payload.message);
+                handleFailure(msg.payload.message);
             }
         };
 
         worker.onerror = (event) => {
-            if (running && runId === activeRunId) {
-                fail(event.message || 'worker failed');
-            }
+            handleFailure(event.message || 'worker failed');
         };
 
         workers.push(worker);
-        postStartToWorker(worker, req, req.startIndex + workerId, null, workerCount);
+        postStartToWorker(worker, req, startIndex, null, step, plan.engine);
+    };
+
+    for (const plan of workerPlans) {
+        startWorker(plan, req.startIndex + plan.offset);
     }
 }
 
-function startLowestSearch(req: StartSearchRequest, workerCount: number, runId: number) {
+function startLowestSearch(
+    req: StartSearchRequest,
+    workerPlans: SearchWorkerPlan[],
+    runId: number,
+) {
     const chunkSize = normalChunkSize(req.chunkSize);
+    const step = workerPlans.length;
     let chunkStart = Math.max(0, Math.floor(req.startIndex));
 
     const startChunk = () => {
@@ -314,21 +409,48 @@ function startLowestSearch(req: StartSearchRequest, workerCount: number, runId: 
         }
 
         const chunkEnd = Math.min(MAX_INDEX, chunkStart + chunkSize - 1);
-        pendingWorkers = workerCount;
+        pendingWorkers = step;
         bestHit = null;
 
-        for (let workerId = 0; workerId < workerCount; workerId += 1) {
+        const startWorker = (plan: SearchWorkerPlan, startIndex: number) => {
             const worker = createWorker();
+            let checkedByWorker = 0;
+            let settled = false;
+
+            const handleFailure = (message: string) => {
+                if (settled || !running || runId !== activeRunId) {
+                    return;
+                }
+
+                if (plan.engine === 'gpu' && plan.allowCpuFallback) {
+                    settled = true;
+                    worker.terminate();
+                    removeWorker(worker);
+                    try {
+                        startWorker(
+                            { ...plan, engine: 'cpu', allowCpuFallback: false },
+                            startIndex + checkedByWorker * step,
+                        );
+                    } catch (error) {
+                        fail(error instanceof Error ? error.message : String(error));
+                    }
+                    return;
+                }
+
+                fail(message);
+            };
 
             worker.onmessage = (event: MessageEvent<any>) => {
-                if (!running || runId !== activeRunId) {
+                if (settled || !running || runId !== activeRunId) {
                     return;
                 }
 
                 const msg = event.data;
 
                 if (msg.type === 'progress') {
-                    emitProgress(Number(msg.payload.checked) || 0);
+                    const checked = Number(msg.payload.checked) || 0;
+                    checkedByWorker += checked;
+                    emitProgress(checked);
                     return;
                 }
 
@@ -342,6 +464,7 @@ function startLowestSearch(req: StartSearchRequest, workerCount: number, runId: 
                 }
 
                 if (msg.type === 'done') {
+                    settled = true;
                     const done = msg.payload as WorkerDonePayload;
 
                     if (done.hit && isBetterHit(done.hit, bestHit)) {
@@ -363,6 +486,7 @@ function startLowestSearch(req: StartSearchRequest, workerCount: number, runId: 
                 }
 
                 if (msg.type === 'stopped') {
+                    settled = true;
                     pendingWorkers -= 1;
                     if (pendingWorkers <= 0 && running) {
                         finish({ hit: bestHit });
@@ -371,24 +495,27 @@ function startLowestSearch(req: StartSearchRequest, workerCount: number, runId: 
                 }
 
                 if (msg.type === 'error') {
-                    fail(msg.payload.message);
+                    handleFailure(msg.payload.message);
                 }
             };
 
             worker.onerror = (event) => {
-                if (running && runId === activeRunId) {
-                    fail(event.message || 'worker failed');
-                }
+                handleFailure(event.message || 'worker failed');
             };
 
             workers.push(worker);
             postStartToWorker(
                 worker,
                 req,
-                chunkStart + workerId,
+                startIndex,
                 chunkEnd,
-                workerCount,
+                step,
+                plan.engine,
             );
+        };
+
+        for (const plan of workerPlans) {
+            startWorker(plan, chunkStart + plan.offset);
         }
     };
 
@@ -436,7 +563,7 @@ export const browserWorkerRuntime: VanityRuntime = {
         }
 
         validateKeyMaterial(req);
-        const useGpu = shouldUseGpu(req);
+        const workerPlans = buildWorkerPlans(req);
 
         running = true;
         activeRunId += 1;
@@ -445,12 +572,10 @@ export const browserWorkerRuntime: VanityRuntime = {
         emit('state', { running: true });
 
         try {
-            const workerCount = useGpu ? 1 : normalWorkerCount(req.workerCount);
-
             if (req.searchMode === 'lowest') {
-                startLowestSearch(req, workerCount, activeRunId);
+                startLowestSearch(req, workerPlans, activeRunId);
             } else {
-                startFastSearch(req, workerCount, activeRunId);
+                startFastSearch(req, workerPlans, activeRunId);
             }
         } catch (error) {
             running = false;

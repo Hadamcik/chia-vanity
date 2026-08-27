@@ -1,6 +1,6 @@
 export type Mode = 'hardened' | 'unhardened' | 'both';
 export type SearchMode = 'fast' | 'lowest';
-export type SearchEngine = 'auto' | 'cpu' | 'gpu';
+export type SearchEngine = 'auto' | 'cpu' | 'gpu' | 'hybrid';
 export type UiState = 'idle' | 'running' | 'stopping';
 
 export interface SearchProgressPayload {

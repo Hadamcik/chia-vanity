@@ -3,7 +3,6 @@ import { runtime } from '../runtime';
 import type {
     DeriveAddressPayload,
     Mode,
-    SearchEngine,
     SearchHitPayload,
     SearchMode,
     StartSearchRequest,
@@ -56,7 +55,8 @@ export default function VanityApp() {
     const [mode, setMode] = useState<Mode>('unhardened');
     const [workerCount, setWorkerCount] = useState(0);
     const [searchMode, setSearchMode] = useState<SearchMode>('fast');
-    const [searchEngine, setSearchEngine] = useState<SearchEngine>('auto');
+    const [cpuSearchEnabled, setCpuSearchEnabled] = useState(true);
+    const [gpuSearchEnabled, setGpuSearchEnabled] = useState(true);
     const [deriveIndex, setDeriveIndex] = useState(0);
     const [derivePrefix, setDerivePrefix] = useState<AddressPrefix>('xch');
     const [deriving, setDeriving] = useState(false);
@@ -238,10 +238,7 @@ export default function VanityApp() {
         if (mode !== 'unhardened' && credentialKind === 'public') {
             setCredentialKind('private');
         }
-        if (mode !== 'unhardened' && searchEngine === 'gpu') {
-            setSearchEngine('cpu');
-        }
-    }, [credentialKind, mode, searchEngine]);
+    }, [credentialKind, mode]);
 
     const unhardenedSelected = mode === 'unhardened' || mode === 'both';
     const hardenedSelected = mode === 'hardened' || mode === 'both';
@@ -251,11 +248,28 @@ export default function VanityApp() {
     const activeCredentialSource: CredentialSource = canImportFromSage ? credentialSource : 'manual';
     const isSagePublicSource =
         isSage && activeCredentialSource === 'sage' && credentialKind === 'public';
+    const webGpuExposed = typeof navigator !== 'undefined' && 'gpu' in navigator;
+    const gpuUnavailableReason = mode !== 'unhardened'
+        ? 'GPU unavailable: WebGPU search supports unhardened derivation only.'
+        : isSagePublicSource
+            ? 'GPU unavailable: Sage public-key search supplies derived keys and must use the CPU.'
+            : !webGpuExposed
+                ? 'GPU unavailable: this browser does not expose WebGPU.'
+                : null;
+    const gpuSearchAvailable = gpuUnavailableReason === null;
     useEffect(() => {
-        if (isSagePublicSource && searchEngine === 'gpu') {
-            setSearchEngine('cpu');
+        if (!gpuSearchAvailable) {
+            setGpuSearchEnabled(false);
+            setCpuSearchEnabled(true);
         }
-    }, [isSagePublicSource, searchEngine]);
+    }, [gpuSearchAvailable]);
+    const effectiveGpuSearchEnabled = gpuSearchAvailable && gpuSearchEnabled;
+    const effectiveCpuSearchEnabled = cpuSearchEnabled || !effectiveGpuSearchEnabled;
+    const searchEngine = effectiveCpuSearchEnabled && effectiveGpuSearchEnabled
+        ? 'hybrid'
+        : effectiveGpuSearchEnabled
+            ? 'gpu'
+            : 'cpu';
     const canUsePublicCredential = mode === 'unhardened';
     const hasSageKeyPermission = sageCapabilities.includes(WALLET_PUBLIC_KEYS_CAPABILITY);
     const hasSageSecretPermission = sageCapabilities.includes(WALLET_SECRET_CAPABILITY);
@@ -411,6 +425,38 @@ export default function VanityApp() {
 
             return previous === 'public' ? 'private' : previous;
         });
+    }
+
+    function handleComputeChange(kind: 'cpu' | 'gpu', enabled: boolean) {
+        if (kind === 'cpu') {
+            if (enabled) {
+                setCpuSearchEnabled(true);
+                return;
+            }
+
+            if (!gpuSearchEnabled) {
+                if (!gpuSearchAvailable) {
+                    return;
+                }
+                setGpuSearchEnabled(true);
+            }
+            setCpuSearchEnabled(false);
+            return;
+        }
+
+        if (!gpuSearchAvailable) {
+            return;
+        }
+
+        if (enabled) {
+            setGpuSearchEnabled(true);
+            return;
+        }
+
+        if (!cpuSearchEnabled) {
+            setCpuSearchEnabled(true);
+        }
+        setGpuSearchEnabled(false);
     }
 
     async function handleDerive() {
@@ -961,28 +1007,59 @@ export default function VanityApp() {
                                     </label>
                                 </div>
 
+                                <div style={styles.computePicker}>
+                                    <span style={styles.labelText}>Search with</span>
+                                    <div style={styles.checkboxRow}>
+                                        <label
+                                            style={{
+                                                ...styles.checkboxOption,
+                                                ...(effectiveCpuSearchEnabled && !effectiveGpuSearchEnabled && !gpuSearchAvailable
+                                                    ? styles.checkboxOptionDisabled
+                                                    : null),
+                                            }}
+                                        >
+                                            <input
+                                                style={styles.checkboxInput}
+                                                type="checkbox"
+                                                checked={effectiveCpuSearchEnabled}
+                                                onChange={(e) => handleComputeChange('cpu', e.target.checked)}
+                                                disabled={
+                                                    inputsDisabled ||
+                                                    (effectiveCpuSearchEnabled && !effectiveGpuSearchEnabled && !gpuSearchAvailable)
+                                                }
+                                            />
+                                            <span>CPU</span>
+                                        </label>
+                                        <label
+                                            style={{
+                                                ...styles.checkboxOption,
+                                                ...(!gpuSearchAvailable
+                                                    ? styles.checkboxOptionDisabled
+                                                    : null),
+                                            }}
+                                            title={gpuUnavailableReason ?? 'Use WebGPU alongside the CPU'}
+                                        >
+                                            <input
+                                                style={styles.checkboxInput}
+                                                type="checkbox"
+                                                checked={effectiveGpuSearchEnabled}
+                                                onChange={(e) => handleComputeChange('gpu', e.target.checked)}
+                                                disabled={
+                                                    inputsDisabled ||
+                                                    !gpuSearchAvailable
+                                                }
+                                            />
+                                            <span>GPU (WebGPU)</span>
+                                        </label>
+                                    </div>
+                                    {gpuUnavailableReason ? (
+                                        <span style={styles.computeHint}>{gpuUnavailableReason}</span>
+                                    ) : null}
+                                </div>
+
                                 <details style={styles.advancedDetails}>
                                     <summary style={styles.advancedSummary}>Advanced</summary>
                                     <div style={styles.advancedGrid}>
-                                        <label style={styles.field}>
-                                            <span style={styles.labelText}>Compute engine</span>
-                                            <select
-                                                style={styles.input}
-                                                value={searchEngine}
-                                                onChange={(e) => setSearchEngine(e.target.value as SearchEngine)}
-                                                disabled={inputsDisabled}
-                                            >
-                                                <option value="auto">auto</option>
-                                                <option value="cpu">CPU</option>
-                                                <option
-                                                    value="gpu"
-                                                    disabled={mode !== 'unhardened' || isSagePublicSource}
-                                                >
-                                                    GPU (WebGPU)
-                                                </option>
-                                            </select>
-                                        </label>
-
                                         <label style={styles.field}>
                                             <span style={styles.labelText}>Search strategy</span>
                                             <select
@@ -1004,10 +1081,10 @@ export default function VanityApp() {
                                         />
 
                                         <NumberField
-                                            label="Workers"
+                                            label="CPU workers"
                                             value={workerCount}
                                             onChange={setWorkerCount}
-                                            disabled={inputsDisabled || searchEngine === 'gpu'}
+                                            disabled={inputsDisabled || !effectiveCpuSearchEnabled}
                                         />
 
                                         <NumberField
@@ -1723,6 +1800,10 @@ const styles: Record<string, React.CSSProperties> = {
         cursor: 'pointer',
         userSelect: 'none',
     },
+    checkboxOptionDisabled: {
+        opacity: 0.5,
+        cursor: 'not-allowed',
+    },
     checkboxInput: {
         width: 14,
         height: 14,
@@ -1768,6 +1849,16 @@ const styles: Record<string, React.CSSProperties> = {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',
         gap: 14,
+    },
+    computePicker: {
+        display: 'grid',
+        gap: 7,
+        justifyItems: 'start',
+    },
+    computeHint: {
+        color: 'var(--text-muted)',
+        fontSize: 12,
+        lineHeight: 1.45,
     },
     targetField: {
         display: 'grid',

@@ -79,19 +79,20 @@ export class WebGpuVanitySearch {
     /**
      * @param {number} start_index
      * @param {number} count
+     * @param {number} step
      * @param {string} address_prefix
      * @param {string} wanted_prefix
      * @param {string} wanted_suffix
      * @returns {Promise<any>}
      */
-    searchBatch(start_index, count, address_prefix, wanted_prefix, wanted_suffix) {
+    searchBatch(start_index, count, step, address_prefix, wanted_prefix, wanted_suffix) {
         const ptr0 = passStringToWasm0(address_prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(wanted_prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(wanted_suffix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.webgpuvanitysearch_searchBatch(this.__wbg_ptr, start_index, count, ptr0, len0, ptr1, len1, ptr2, len2);
+        const ret = wasm.webgpuvanitysearch_searchBatch(this.__wbg_ptr, start_index, count, step, ptr0, len0, ptr1, len1, ptr2, len2);
         return ret;
     }
 }

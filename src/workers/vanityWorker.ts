@@ -2,7 +2,7 @@
 
 import * as chiaWalletSdk from 'chia-wallet-sdk-wasm/chia_wallet_sdk_wasm.js';
 import chiaWalletSdkWasmUrl from 'chia-wallet-sdk-wasm/chia_wallet_sdk_wasm_bg.wasm?url';
-import webGpuVanityWasmUrl from 'webgpu-vanity-wasm/webgpu_vanity_wasm_bg.wasm?url';
+import webGpuVanityWasmUrl from '../../vendor-pkg/webgpu-vanity-wasm/webgpu_vanity_wasm_bg.wasm?url';
 
 const {
     Address,
@@ -84,6 +84,7 @@ interface GpuSearcher {
     searchBatch(
         startIndex: number,
         count: number,
+        step: number,
         addressPrefix: string,
         wantedPrefix: string,
         wantedSuffix: string,
@@ -103,7 +104,7 @@ const CHIA_ACCOUNT_PATH = [
 let initialized = false;
 let shouldStop = false;
 let webGpuInitialized = false;
-let webGpuModule: typeof import('webgpu-vanity-wasm') | null = null;
+let webGpuModule: typeof import('../../vendor-pkg/webgpu-vanity-wasm/webgpu_vanity_wasm.js') | null = null;
 
 async function ensureInit() {
     if (!initialized) {
@@ -124,7 +125,9 @@ async function ensureInit() {
 
 async function ensureWebGpuInit() {
     if (!webGpuModule) {
-        webGpuModule = await import('webgpu-vanity-wasm');
+        // Load the generated glue and binary from the same vendored build. A pre-bundled
+        // file dependency can otherwise leave old glue paired with a newly rebuilt WASM.
+        webGpuModule = await import('../../vendor-pkg/webgpu-vanity-wasm/webgpu_vanity_wasm.js');
     }
 
     if (!webGpuInitialized) {
@@ -544,20 +547,16 @@ async function runGpuSearch(
                 return;
             }
 
-            const remaining = endIndex - index + 1;
+            const remaining = Math.floor((endIndex - index) / payload.step) + 1;
             const count = Math.min(searcher.batchCapacity, remaining);
             const result = await searcher.searchBatch(
                 index,
                 count,
+                payload.step,
                 prefix,
                 wantedPrefixLower,
                 wantedSuffixLower,
             );
-
-            postMessage({
-                type: 'progress',
-                payload: { checked: result.checked },
-            } satisfies WorkerResponse);
 
             if (
                 typeof result.hitIndex === 'number' &&
@@ -585,6 +584,11 @@ async function runGpuSearch(
                     );
                 }
 
+                postMessage({
+                    type: 'progress',
+                    payload: { checked: result.checked },
+                } satisfies WorkerResponse);
+
                 if (payload.searchMode === 'fast') {
                     postMessage({ type: 'hit', payload: verified } satisfies WorkerResponse);
                 } else {
@@ -596,10 +600,15 @@ async function runGpuSearch(
                 return;
             }
 
+            postMessage({
+                type: 'progress',
+                payload: { checked: result.checked },
+            } satisfies WorkerResponse);
+
             if (count >= remaining) {
                 break;
             }
-            index += count;
+            index += count * payload.step;
         }
 
         postMessage({ type: 'done', payload: { hit: null } } satisfies WorkerResponse);

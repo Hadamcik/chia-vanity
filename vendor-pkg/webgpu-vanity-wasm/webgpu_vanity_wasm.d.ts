@@ -9,7 +9,7 @@ export class WebGpuVanitySearch {
     deriveChildPublicKeys(start_index: number, count: number): Promise<Uint8Array>;
     derivePuzzleHashes(start_index: number, count: number): Promise<Uint8Array>;
     deriveSyntheticPublicKeys(start_index: number, count: number): Promise<Uint8Array>;
-    searchBatch(start_index: number, count: number, address_prefix: string, wanted_prefix: string, wanted_suffix: string): Promise<any>;
+    searchBatch(start_index: number, count: number, step: number, address_prefix: string, wanted_prefix: string, wanted_suffix: string): Promise<any>;
     readonly adapterName: string;
     readonly batchCapacity: number;
 }
@@ -27,7 +27,7 @@ export interface InitOutput {
     readonly webgpuvanitysearch_deriveChildPublicKeys: (a: number, b: number, c: number) => any;
     readonly webgpuvanitysearch_derivePuzzleHashes: (a: number, b: number, c: number) => any;
     readonly webgpuvanitysearch_deriveSyntheticPublicKeys: (a: number, b: number, c: number) => any;
-    readonly webgpuvanitysearch_searchBatch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => any;
+    readonly webgpuvanitysearch_searchBatch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => any;
     readonly runFixedBaseBenchmark: (a: number, b: number) => any;
     readonly wasm_bindgen_e54f6e71b3bf86da___convert__closures_____invoke___wasm_bindgen_e54f6e71b3bf86da___JsValue__core_f0fd674eaa06beef___result__Result_____wasm_bindgen_e54f6e71b3bf86da___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_e54f6e71b3bf86da___convert__closures_____invoke___js_sys_6dc4e045ed5c0733___Function_fn_wasm_bindgen_e54f6e71b3bf86da___JsValue_____wasm_bindgen_e54f6e71b3bf86da___sys__Undefined___js_sys_6dc4e045ed5c0733___Function_fn_wasm_bindgen_e54f6e71b3bf86da___JsValue_____wasm_bindgen_e54f6e71b3bf86da___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;

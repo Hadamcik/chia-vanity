@@ -53,7 +53,7 @@
                     child.free();
                 }
 
-                const batch = await gpu.searchBatch(start, count, 'xch', 'xch1', '');
+                const batch = await gpu.searchBatch(start, count, 1, 'xch', 'xch1', '');
                 const child0 = accountPk.deriveUnhardened(start);
                 const synthetic0 = child0.deriveSynthetic();
                 const address0 = new Address(standardPuzzleHash(synthetic0), 'xch');

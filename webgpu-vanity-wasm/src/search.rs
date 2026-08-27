@@ -88,10 +88,14 @@ fn synthetic_scalar_little_endian(public_key: &[u8; PUBLIC_KEY_BYTES]) -> [u8; 3
     little_endian
 }
 
-fn first_stage_scalars(account_public_key: &[u8; PUBLIC_KEY_BYTES], start_index: u32) -> Vec<u8> {
+fn first_stage_scalars(
+    account_public_key: &[u8; PUBLIC_KEY_BYTES],
+    start_index: u32,
+    step: u32,
+) -> Vec<u8> {
     let mut scalars = Vec::with_capacity(BATCH_CAPACITY as usize * SCALAR_BYTES);
     for offset in 0..BATCH_CAPACITY {
-        let index = start_index.wrapping_add(offset);
+        let index = start_index.wrapping_add(offset.wrapping_mul(step));
         let mut scalar = sha256(&[account_public_key, &index.to_be_bytes()]);
         scalar.reverse();
         scalars.extend_from_slice(&scalar);
@@ -163,7 +167,7 @@ impl WebGpuVanitySearch {
             return Err(JsValue::from_str("count exceeds GPU batch capacity"));
         }
         let points = self
-            .derive_batch(start_index)
+            .derive_batch(start_index, 1)
             .await
             .map_err(|error| JsValue::from_str(&format!("{error:#}")))?;
         Ok(points.into_iter().take(count as usize).flatten().collect())
@@ -179,7 +183,7 @@ impl WebGpuVanitySearch {
             return Err(JsValue::from_str("count exceeds GPU batch capacity"));
         }
         let points = self
-            .derive_children(start_index)
+            .derive_children(start_index, 1)
             .await
             .map_err(|error| JsValue::from_str(&format!("{error:#}")))?;
         Ok(points.into_iter().take(count as usize).flatten().collect())
@@ -195,7 +199,7 @@ impl WebGpuVanitySearch {
             return Err(JsValue::from_str("count exceeds GPU batch capacity"));
         }
         let points = self
-            .derive_batch(start_index)
+            .derive_batch(start_index, 1)
             .await
             .map_err(|error| JsValue::from_str(&format!("{error:#}")))?;
         Ok(points
@@ -210,6 +214,7 @@ impl WebGpuVanitySearch {
         &self,
         start_index: u32,
         count: u32,
+        step: u32,
         address_prefix: String,
         wanted_prefix: String,
         wanted_suffix: String,
@@ -219,10 +224,13 @@ impl WebGpuVanitySearch {
                 "count must be within the GPU batch capacity",
             ));
         }
+        if step == 0 {
+            return Err(JsValue::from_str("step must be greater than zero"));
+        }
 
         let started = Instant::now();
         let points = self
-            .derive_batch(start_index)
+            .derive_batch(start_index, step)
             .await
             .map_err(|error| JsValue::from_str(&format!("{error:#}")))?;
         let wanted_prefix = wanted_prefix.to_lowercase();
@@ -242,7 +250,7 @@ impl WebGpuVanitySearch {
             {
                 continue;
             }
-            hit_index = Some(start_index.wrapping_add(offset as u32));
+            hit_index = Some(start_index.wrapping_add((offset as u32).wrapping_mul(step)));
             hit_address = Some(address);
             break;
         }
@@ -280,6 +288,20 @@ mod tests {
             compress_gpu_point(&gpu_bytes).unwrap().as_slice(),
             generator.to_affine().to_bytes().as_ref(),
         );
+    }
+
+    #[test]
+    fn first_stage_scalars_honor_index_stride() {
+        let account_public_key = [0x42; PUBLIC_KEY_BYTES];
+        let scalars = first_stage_scalars(&account_public_key, 5, 3);
+
+        for (offset, expected_index) in [5_u32, 8, 11].into_iter().enumerate() {
+            let mut expected = sha256(&[&account_public_key, &expected_index.to_be_bytes()]);
+            expected.reverse();
+
+            let start = offset * SCALAR_BYTES;
+            assert_eq!(&scalars[start..start + SCALAR_BYTES], &expected);
+        }
     }
 
     #[test]
@@ -589,8 +611,12 @@ impl WebGpuVanitySearch {
         readback(&self.device, &self.staging).await
     }
 
-    async fn derive_batch(&self, start_index: u32) -> Result<Vec<[u8; PUBLIC_KEY_BYTES]>> {
-        let children = self.derive_children(start_index).await?;
+    async fn derive_batch(
+        &self,
+        start_index: u32,
+        step: u32,
+    ) -> Result<Vec<[u8; PUBLIC_KEY_BYTES]>> {
+        let children = self.derive_children(start_index, step).await?;
 
         let synthetic_scalars = second_stage_scalars(&children);
         self.queue
@@ -601,8 +627,12 @@ impl WebGpuVanitySearch {
         compressed_points(&synthetic_bytes)
     }
 
-    async fn derive_children(&self, start_index: u32) -> Result<Vec<[u8; PUBLIC_KEY_BYTES]>> {
-        let first_scalars = first_stage_scalars(&self.account_public_key, start_index);
+    async fn derive_children(
+        &self,
+        start_index: u32,
+        step: u32,
+    ) -> Result<Vec<[u8; PUBLIC_KEY_BYTES]>> {
+        let first_scalars = first_stage_scalars(&self.account_public_key, start_index, step);
         self.queue
             .write_buffer(&self.scalar_buffer, 0, &first_scalars);
         let child_bytes = self
