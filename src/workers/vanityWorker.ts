@@ -15,8 +15,8 @@ const {
 type SecretKeyInstance = InstanceType<typeof chiaWalletSdk.SecretKey>;
 type PublicKeyInstance = InstanceType<typeof chiaWalletSdk.PublicKey>;
 type RootKeys = {
-    masterSk: SecretKeyInstance | null;
-    masterPk: PublicKeyInstance | null;
+    accountSk: SecretKeyInstance | null;
+    accountPk: PublicKeyInstance | null;
 };
 
 type Mode = 'hardened' | 'unhardened' | 'both';
@@ -72,6 +72,11 @@ type WorkerResponse =
 const CHIA_PURPOSE = 12381;
 const CHIA_COIN_TYPE = 8444;
 const CHIA_ACCOUNT = 2;
+const CHIA_ACCOUNT_PATH = [
+    CHIA_PURPOSE,
+    CHIA_COIN_TYPE,
+    CHIA_ACCOUNT,
+];
 
 let initialized = false;
 let shouldStop = false;
@@ -121,15 +126,10 @@ function standardAddressForSk(secretKey: SecretKeyInstance, prefix: string): str
 }
 
 function deriveUnhardenedPkForIndex(
-    masterPk: PublicKeyInstance,
+    accountPk: PublicKeyInstance,
     index: number,
 ): PublicKeyInstance {
-    return masterPk.deriveUnhardenedPath([
-        CHIA_PURPOSE,
-        CHIA_COIN_TYPE,
-        CHIA_ACCOUNT,
-        index,
-    ]);
+    return accountPk.deriveUnhardened(index);
 }
 
 function normalizePublicKeyHex(value: string): string {
@@ -234,44 +234,57 @@ function rootKeysFromPayload(payload: {
     mode: Mode;
 }): RootKeys {
     if (payload.mode === 'unhardened') {
-        return {
-            masterSk: null,
-            masterPk: masterPublicKeyFromPayload(payload),
-        };
+        const masterPk = masterPublicKeyFromPayload(payload);
+
+        try {
+            return {
+                accountSk: null,
+                accountPk: masterPk.deriveUnhardenedPath(CHIA_ACCOUNT_PATH),
+            };
+        } finally {
+            masterPk.free();
+        }
     }
 
     const masterSk = masterSecretKeyFromPayload(payload);
 
-    if (payload.mode === 'hardened') {
-        return { masterSk, masterPk: null };
-    }
-
     try {
-        return {
-            masterSk,
-            masterPk: masterSk.publicKey(),
-        };
-    } catch (error) {
+        const accountSk = masterSk.deriveHardenedPath(CHIA_ACCOUNT_PATH);
+
+        if (payload.mode === 'hardened') {
+            return { accountSk, accountPk: null };
+        }
+
+        try {
+            const masterPk = masterSk.publicKey();
+
+            try {
+                return {
+                    accountSk,
+                    accountPk: masterPk.deriveUnhardenedPath(CHIA_ACCOUNT_PATH),
+                };
+            } finally {
+                masterPk.free();
+            }
+        } catch (error) {
+            accountSk.free();
+            throw error;
+        }
+    } finally {
         masterSk.free();
-        throw error;
     }
 }
 
 function freeRootKeys(root: RootKeys) {
-    root.masterPk?.free();
-    root.masterSk?.free();
+    root.accountPk?.free();
+    root.accountSk?.free();
 }
 
 function deriveHardenedSkForIndex(
-    masterSk: SecretKeyInstance,
+    accountSk: SecretKeyInstance,
     index: number,
 ): SecretKeyInstance {
-    return masterSk.deriveHardenedPath([
-        CHIA_PURPOSE,
-        CHIA_COIN_TYPE,
-        CHIA_ACCOUNT,
-        index,
-    ]);
+    return accountSk.deriveHardened(index);
 }
 
 function deriveCandidatesForIndex(
@@ -287,11 +300,11 @@ function deriveCandidatesForIndex(
     }> = [];
 
     if (mode === 'unhardened' || mode === 'both') {
-        if (!root.masterPk) {
+        if (!root.accountPk) {
             throw new Error('mnemonic or master public key is required for unhardened mode');
         }
 
-        const publicKey = deriveUnhardenedPkForIndex(root.masterPk, index);
+        const publicKey = deriveUnhardenedPkForIndex(root.accountPk, index);
 
         try {
             out.push({
@@ -305,11 +318,11 @@ function deriveCandidatesForIndex(
     }
 
     if (mode === 'hardened' || mode === 'both') {
-        if (!root.masterSk) {
+        if (!root.accountSk) {
             throw new Error('mnemonic is required for hardened mode');
         }
 
-        const secretKey = deriveHardenedSkForIndex(root.masterSk, index);
+        const secretKey = deriveHardenedSkForIndex(root.accountSk, index);
 
         try {
             out.push({
