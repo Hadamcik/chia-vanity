@@ -436,6 +436,7 @@ export const browserWorkerRuntime: VanityRuntime = {
         }
 
         validateKeyMaterial(req);
+        const useGpu = shouldUseGpu(req);
 
         running = true;
         activeRunId += 1;
@@ -443,14 +444,19 @@ export const browserWorkerRuntime: VanityRuntime = {
         ensureCancelView();
         emit('state', { running: true });
 
-        const workerCount = shouldUseGpu(req)
-            ? 1
-            : normalWorkerCount(req.workerCount);
+        try {
+            const workerCount = useGpu ? 1 : normalWorkerCount(req.workerCount);
 
-        if (req.searchMode === 'lowest') {
-            startLowestSearch(req, workerCount, activeRunId);
-        } else {
-            startFastSearch(req, workerCount, activeRunId);
+            if (req.searchMode === 'lowest') {
+                startLowestSearch(req, workerCount, activeRunId);
+            } else {
+                startFastSearch(req, workerCount, activeRunId);
+            }
+        } catch (error) {
+            running = false;
+            cleanupWorkers();
+            emit('state', { running: false });
+            throw error;
         }
     },
 
