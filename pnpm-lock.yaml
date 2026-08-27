@@ -26,6 +26,9 @@ importers:
       sage-app-sdk:
         specifier: ^0.13.0
         version: 0.13.0
+      webgpu-vanity-wasm:
+        specifier: file:vendor-pkg/webgpu-vanity-wasm
+        version: file:vendor-pkg/webgpu-vanity-wasm
     devDependencies:
       '@tauri-apps/cli':
         specifier: ^2.10.3
@@ -724,6 +727,9 @@ packages:
       yaml:
         optional: true
 
+  webgpu-vanity-wasm@file:vendor-pkg/webgpu-vanity-wasm:
+    resolution: {directory: vendor-pkg/webgpu-vanity-wasm, type: directory}
+
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
@@ -1272,5 +1278,7 @@ snapshots:
       tinyglobby: 0.2.16
     optionalDependencies:
       fsevents: 2.3.3
+
+  webgpu-vanity-wasm@file:vendor-pkg/webgpu-vanity-wasm: {}
 
   yallist@3.1.1: {}

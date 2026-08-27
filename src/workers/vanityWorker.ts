@@ -2,6 +2,7 @@
 
 import * as chiaWalletSdk from 'chia-wallet-sdk-wasm/chia_wallet_sdk_wasm.js';
 import chiaWalletSdkWasmUrl from 'chia-wallet-sdk-wasm/chia_wallet_sdk_wasm_bg.wasm?url';
+import webGpuVanityWasmUrl from 'webgpu-vanity-wasm/webgpu_vanity_wasm_bg.wasm?url';
 
 const {
     Address,
@@ -21,6 +22,7 @@ type RootKeys = {
 
 type Mode = 'hardened' | 'unhardened' | 'both';
 type SearchMode = 'fast' | 'lowest';
+type SearchEngine = 'auto' | 'cpu' | 'gpu';
 
 interface StartPayload {
     mnemonic: string;
@@ -34,6 +36,7 @@ interface StartPayload {
     step: number;
     mode: Mode;
     searchMode: SearchMode;
+    engine: SearchEngine;
     reportEvery: number;
     cancelBuffer: SharedArrayBuffer | null;
 }
@@ -69,6 +72,25 @@ type WorkerResponse =
     | { type: 'stopped' }
     | { type: 'error'; payload: { message: string } };
 
+interface GpuBatchResult {
+    checked: number;
+    elapsedMs: number;
+    hitIndex?: number;
+    hitAddress?: string;
+}
+
+interface GpuSearcher {
+    readonly batchCapacity: number;
+    searchBatch(
+        startIndex: number,
+        count: number,
+        addressPrefix: string,
+        wantedPrefix: string,
+        wantedSuffix: string,
+    ): Promise<GpuBatchResult>;
+    free(): void;
+}
+
 const CHIA_PURPOSE = 12381;
 const CHIA_COIN_TYPE = 8444;
 const CHIA_ACCOUNT = 2;
@@ -80,6 +102,8 @@ const CHIA_ACCOUNT_PATH = [
 
 let initialized = false;
 let shouldStop = false;
+let webGpuInitialized = false;
+let webGpuModule: typeof import('webgpu-vanity-wasm') | null = null;
 
 async function ensureInit() {
     if (!initialized) {
@@ -96,6 +120,19 @@ async function ensureInit() {
 
         initialized = true;
     }
+}
+
+async function ensureWebGpuInit() {
+    if (!webGpuModule) {
+        webGpuModule = await import('webgpu-vanity-wasm');
+    }
+
+    if (!webGpuInitialized) {
+        await webGpuModule.default(webGpuVanityWasmUrl);
+        webGpuInitialized = true;
+    }
+
+    return webGpuModule;
 }
 
 function standardAddressForPk(publicKey: PublicKeyInstance, prefix: string): string {
@@ -381,7 +418,7 @@ function matchesWantedAddress(
     return true;
 }
 
-async function runSearch(payload: StartPayload) {
+async function runCpuSearch(payload: StartPayload) {
     await ensureInit();
 
     const cancelView = payload.cancelBuffer
@@ -460,6 +497,144 @@ async function runSearch(payload: StartPayload) {
     } finally {
         freeRootKeys(root);
     }
+}
+
+async function createGpuSearchContext(payload: StartPayload): Promise<{
+    root: RootKeys;
+    searcher: GpuSearcher;
+}> {
+    await ensureInit();
+    const gpu = await ensureWebGpuInit();
+    const root = rootKeysFromPayload(payload);
+
+    try {
+        if (!root.accountPk) {
+            throw new Error('GPU search requires an unhardened account public key');
+        }
+
+        const searcher = await gpu.WebGpuVanitySearch.create(root.accountPk.toBytes());
+        return { root, searcher };
+    } catch (error) {
+        freeRootKeys(root);
+        throw error;
+    }
+}
+
+async function runGpuSearch(
+    payload: StartPayload,
+    root: RootKeys,
+    searcher: GpuSearcher,
+) {
+    const cancelView = payload.cancelBuffer
+        ? new Int32Array(payload.cancelBuffer)
+        : null;
+    const endIndex = payload.endIndex ?? 0xffffffff;
+    const prefix = payload.addressPrefix;
+    const wantedPrefixLower = payload.wantedPrefix.toLowerCase();
+    const wantedSuffixLower = payload.wantedSuffix.toLowerCase();
+    let index = payload.startIndex;
+
+    try {
+        while (index <= endIndex) {
+            if (
+                shouldStop ||
+                (cancelView !== null && Atomics.load(cancelView, 0) === 1)
+            ) {
+                postMessage({ type: 'stopped' } satisfies WorkerResponse);
+                return;
+            }
+
+            const remaining = endIndex - index + 1;
+            const count = Math.min(searcher.batchCapacity, remaining);
+            const result = await searcher.searchBatch(
+                index,
+                count,
+                prefix,
+                wantedPrefixLower,
+                wantedSuffixLower,
+            );
+
+            postMessage({
+                type: 'progress',
+                payload: { checked: result.checked },
+            } satisfies WorkerResponse);
+
+            if (
+                typeof result.hitIndex === 'number' &&
+                typeof result.hitAddress === 'string'
+            ) {
+                const verified = deriveCandidatesForIndex(
+                    root,
+                    result.hitIndex,
+                    'unhardened',
+                    prefix,
+                )[0];
+
+                if (
+                    !verified ||
+                    verified.address.toLowerCase() !== result.hitAddress?.toLowerCase() ||
+                    !matchesWantedAddress(
+                        verified.address,
+                        wantedPrefixLower,
+                        wantedSuffixLower,
+                    )
+                ) {
+                    throw new Error(
+                        `GPU candidate ${result.hitIndex} failed canonical CPU verification ` +
+                        `(GPU ${result.hitAddress ?? 'missing'}, CPU ${verified?.address ?? 'missing'})`,
+                    );
+                }
+
+                if (payload.searchMode === 'fast') {
+                    postMessage({ type: 'hit', payload: verified } satisfies WorkerResponse);
+                } else {
+                    postMessage({
+                        type: 'done',
+                        payload: { hit: verified },
+                    } satisfies WorkerResponse);
+                }
+                return;
+            }
+
+            if (count >= remaining) {
+                break;
+            }
+            index += count;
+        }
+
+        postMessage({ type: 'done', payload: { hit: null } } satisfies WorkerResponse);
+    } finally {
+        searcher.free();
+        freeRootKeys(root);
+    }
+}
+
+async function runSearch(payload: StartPayload) {
+    if (payload.engine === 'cpu') {
+        await runCpuSearch(payload);
+        return;
+    }
+
+    if (payload.mode !== 'unhardened') {
+        if (payload.engine === 'auto') {
+            await runCpuSearch(payload);
+            return;
+        }
+        throw new Error('GPU search currently supports unhardened mode only');
+    }
+
+    let context: Awaited<ReturnType<typeof createGpuSearchContext>>;
+    try {
+        context = await createGpuSearchContext(payload);
+    } catch (error) {
+        if (payload.engine === 'auto') {
+            await runCpuSearch(payload);
+            return;
+        }
+        throw error;
+    }
+
+    await runGpuSearch(payload, context.root, context.searcher);
 }
 
 async function runDerive(payload: DerivePayload) {

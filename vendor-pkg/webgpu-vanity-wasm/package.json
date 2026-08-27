@@ -1,0 +1,21 @@
+{
+  "name": "webgpu-vanity-wasm",
+  "type": "module",
+  "description": "WebGPU accelerated unhardened Chia vanity address search",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hadamcik/chia-vanity"
+  },
+  "files": [
+    "webgpu_vanity_wasm_bg.wasm",
+    "webgpu_vanity_wasm.js",
+    "webgpu_vanity_wasm.d.ts"
+  ],
+  "main": "webgpu_vanity_wasm.js",
+  "types": "webgpu_vanity_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

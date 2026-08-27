@@ -1,5 +1,6 @@
 export type Mode = 'hardened' | 'unhardened' | 'both';
 export type SearchMode = 'fast' | 'lowest';
+export type SearchEngine = 'auto' | 'cpu' | 'gpu';
 export type UiState = 'idle' | 'running' | 'stopping';
 
 export interface SearchProgressPayload {
@@ -53,6 +54,7 @@ export interface StartSearchRequest {
     mode: Mode;
     workerCount: number;
     searchMode: SearchMode;
+    engine: SearchEngine;
 }
 
 export interface VanityRuntime {

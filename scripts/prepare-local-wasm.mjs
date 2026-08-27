@@ -9,9 +9,12 @@ const appRoot = path.resolve(__dirname, '..');
 
 const walletSdkRoot = path.join(appRoot, 'external', 'chia-wallet-sdk', 'wasm');
 const walletSdkPkg = path.join(walletSdkRoot, 'pkg');
+const gpuVanityRoot = path.join(appRoot, 'webgpu-vanity-wasm');
+const gpuVanityPkg = path.join(gpuVanityRoot, 'pkg');
 
 const vendorPkgRoot = path.join(appRoot, 'vendor-pkg');
 const localWalletPkg = path.join(vendorPkgRoot, 'chia-wallet-sdk-wasm');
+const localGpuVanityPkg = path.join(vendorPkgRoot, 'webgpu-vanity-wasm');
 
 const llvmPrefix = '/opt/homebrew/opt/llvm';
 
@@ -57,7 +60,12 @@ mkdirp(vendorPkgRoot);
 console.log('Building chia-wallet-sdk-wasm...');
 runWasmPackBuild(walletSdkRoot);
 
+console.log('Building webgpu-vanity-wasm...');
+runWasmPackBuild(gpuVanityRoot);
+
 console.log('Copying local wasm packages...');
 copyDir(walletSdkPkg, localWalletPkg);
+copyDir(gpuVanityPkg, localGpuVanityPkg);
+fs.rmSync(path.join(localGpuVanityPkg, '.gitignore'), { force: true });
 
 console.log('Local wasm packages prepared.');

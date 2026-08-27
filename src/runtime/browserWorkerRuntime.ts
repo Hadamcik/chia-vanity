@@ -154,6 +154,28 @@ function normalChunkSize(requested: number): number {
     return Math.max(1, Math.floor(requested));
 }
 
+function hasWebGpu(): boolean {
+    return typeof navigator !== 'undefined' && 'gpu' in navigator;
+}
+
+function shouldUseGpu(req: StartSearchRequest): boolean {
+    if (req.engine === 'cpu') {
+        return false;
+    }
+
+    if (req.engine === 'gpu') {
+        if (req.mode !== 'unhardened') {
+            throw new Error('GPU search currently supports unhardened mode only');
+        }
+        if (!hasWebGpu()) {
+            throw new Error('WebGPU is not available in this browser');
+        }
+        return true;
+    }
+
+    return req.mode === 'unhardened' && hasWebGpu();
+}
+
 function normalizePublicKeyHex(value: string): string {
     return value.trim().toLowerCase().replace(/^0x/, '');
 }
@@ -217,6 +239,7 @@ function postStartToWorker(
             step,
             mode: req.mode,
             searchMode: req.searchMode,
+            engine: req.engine,
             reportEvery: 1000,
             cancelBuffer: cancelView?.buffer ?? null,
         },
@@ -420,7 +443,9 @@ export const browserWorkerRuntime: VanityRuntime = {
         ensureCancelView();
         emit('state', { running: true });
 
-        const workerCount = normalWorkerCount(req.workerCount);
+        const workerCount = shouldUseGpu(req)
+            ? 1
+            : normalWorkerCount(req.workerCount);
 
         if (req.searchMode === 'lowest') {
             startLowestSearch(req, workerCount, activeRunId);

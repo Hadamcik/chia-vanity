@@ -1,0 +1,39 @@
+[package]
+name = "webgpu-vanity-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "WebGPU accelerated unhardened Chia vanity address search"
+license = "MIT"
+repository = "https://github.com/Hadamcik/chia-vanity"
+
+[lib]
+name = "webgpu_vanity_wasm"
+crate-type = ["cdylib"]
+
+[workspace]
+
+[dependencies]
+anyhow = "1.0.102"
+bech32 = "0.9.1"
+blstrs = { package = "nam-blstrs", version = "0.7.1-nam.0" }
+bytemuck = "1.25.0"
+console_error_panic_hook = "0.1.7"
+futures = "0.3.32"
+getrandom-02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
+group = "0.13.0"
+num-bigint = "0.4.6"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6.5"
+sha2 = "0.10.9"
+wasm-bindgen = "0.2.113"
+wasm-bindgen-futures = "0.4.63"
+web-time = "1.1.0"
+webgpu-groth16 = "0.2.0"
+wgpu = "28.0.0"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[profile.release]
+lto = true

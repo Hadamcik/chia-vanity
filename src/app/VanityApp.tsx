@@ -3,6 +3,7 @@ import { runtime } from '../runtime';
 import type {
     DeriveAddressPayload,
     Mode,
+    SearchEngine,
     SearchHitPayload,
     SearchMode,
     StartSearchRequest,
@@ -55,6 +56,7 @@ export default function VanityApp() {
     const [mode, setMode] = useState<Mode>('unhardened');
     const [workerCount, setWorkerCount] = useState(0);
     const [searchMode, setSearchMode] = useState<SearchMode>('fast');
+    const [searchEngine, setSearchEngine] = useState<SearchEngine>('auto');
     const [deriveIndex, setDeriveIndex] = useState(0);
     const [derivePrefix, setDerivePrefix] = useState<AddressPrefix>('xch');
     const [deriving, setDeriving] = useState(false);
@@ -236,7 +238,10 @@ export default function VanityApp() {
         if (mode !== 'unhardened' && credentialKind === 'public') {
             setCredentialKind('private');
         }
-    }, [credentialKind, mode]);
+        if (mode !== 'unhardened' && searchEngine === 'gpu') {
+            setSearchEngine('cpu');
+        }
+    }, [credentialKind, mode, searchEngine]);
 
     const unhardenedSelected = mode === 'unhardened' || mode === 'both';
     const hardenedSelected = mode === 'hardened' || mode === 'both';
@@ -246,6 +251,11 @@ export default function VanityApp() {
     const activeCredentialSource: CredentialSource = canImportFromSage ? credentialSource : 'manual';
     const isSagePublicSource =
         isSage && activeCredentialSource === 'sage' && credentialKind === 'public';
+    useEffect(() => {
+        if (isSagePublicSource && searchEngine === 'gpu') {
+            setSearchEngine('cpu');
+        }
+    }, [isSagePublicSource, searchEngine]);
     const canUsePublicCredential = mode === 'unhardened';
     const hasSageKeyPermission = sageCapabilities.includes(WALLET_PUBLIC_KEYS_CAPABILITY);
     const hasSageSecretPermission = sageCapabilities.includes(WALLET_SECRET_CAPABILITY);
@@ -336,6 +346,7 @@ export default function VanityApp() {
             mode,
             workerCount: Math.max(0, Math.floor(workerCount) || 0),
             searchMode,
+            engine: searchEngine,
         };
 
         try {
@@ -954,6 +965,25 @@ export default function VanityApp() {
                                     <summary style={styles.advancedSummary}>Advanced</summary>
                                     <div style={styles.advancedGrid}>
                                         <label style={styles.field}>
+                                            <span style={styles.labelText}>Compute engine</span>
+                                            <select
+                                                style={styles.input}
+                                                value={searchEngine}
+                                                onChange={(e) => setSearchEngine(e.target.value as SearchEngine)}
+                                                disabled={inputsDisabled}
+                                            >
+                                                <option value="auto">auto</option>
+                                                <option value="cpu">CPU</option>
+                                                <option
+                                                    value="gpu"
+                                                    disabled={mode !== 'unhardened' || isSagePublicSource}
+                                                >
+                                                    GPU (WebGPU)
+                                                </option>
+                                            </select>
+                                        </label>
+
+                                        <label style={styles.field}>
                                             <span style={styles.labelText}>Search strategy</span>
                                             <select
                                                 style={styles.input}
@@ -977,7 +1007,7 @@ export default function VanityApp() {
                                             label="Workers"
                                             value={workerCount}
                                             onChange={setWorkerCount}
-                                            disabled={inputsDisabled}
+                                            disabled={inputsDisabled || searchEngine === 'gpu'}
                                         />
 
                                         <NumberField

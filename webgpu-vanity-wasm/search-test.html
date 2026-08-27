@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Vanity WebGPU differential test</title></head>
+<body>
+    <button id="run">Run differential test</button>
+    <pre id="output">Ready.</pre>
+    <script type="module">
+        import initGpu, { WebGpuVanitySearch } from './pkg/webgpu_vanity_wasm.js';
+        import initSdk, {
+            Address,
+            SecretKey,
+            standardPuzzleHash,
+        } from '/vendor-pkg/chia-wallet-sdk-wasm/chia_wallet_sdk_wasm.js';
+
+        const output = document.querySelector('#output');
+        document.querySelector('#run').addEventListener('click', async () => {
+            output.textContent = 'Running…';
+            try {
+                await Promise.all([initGpu(), initSdk()]);
+                const seed = new Uint8Array(32).fill(7);
+                const masterSk = SecretKey.fromSeed(seed);
+                const masterPk = masterSk.publicKey();
+                const accountPk = masterPk.deriveUnhardenedPath([12381, 8444, 2]);
+                const gpu = await WebGpuVanitySearch.create(accountPk.toBytes());
+                const count = 4096;
+                const start = 4096;
+                const gpuChildBytes = await gpu.deriveChildPublicKeys(start, count);
+                const gpuBytes = await gpu.deriveSyntheticPublicKeys(start, count);
+                const gpuPuzzleHashes = await gpu.derivePuzzleHashes(start, count);
+                const childMismatches = [];
+                const mismatches = [];
+                const puzzleHashMismatches = [];
+
+                for (let index = 0; index < count; index += 1) {
+                    const child = accountPk.deriveUnhardened(start + index);
+                    const synthetic = child.deriveSynthetic();
+                    const expectedChild = child.toBytes();
+                    const expected = synthetic.toBytes();
+                    const actualChild = gpuChildBytes.slice(index * 48, (index + 1) * 48);
+                    const actual = gpuBytes.slice(index * 48, (index + 1) * 48);
+                    const expectedPuzzleHash = standardPuzzleHash(synthetic);
+                    const actualPuzzleHash = gpuPuzzleHashes.slice(index * 32, (index + 1) * 32);
+                    if (!expectedChild.every((byte, offset) => byte === actualChild[offset])) {
+                        childMismatches.push(index);
+                    }
+                    if (!expected.every((byte, offset) => byte === actual[offset])) {
+                        mismatches.push(index);
+                    }
+                    if (!expectedPuzzleHash.every((byte, offset) => byte === actualPuzzleHash[offset])) {
+                        puzzleHashMismatches.push(index);
+                    }
+                    synthetic.free();
+                    child.free();
+                }
+
+                const batch = await gpu.searchBatch(start, count, 'xch', 'xch1', '');
+                const child0 = accountPk.deriveUnhardened(start);
+                const synthetic0 = child0.deriveSynthetic();
+                const address0 = new Address(standardPuzzleHash(synthetic0), 'xch');
+                const expectedAddress = address0.encode();
+                const result = {
+                    adapter: gpu.adapterName,
+                    count,
+                    start,
+                    masterPublicKeyHex: Array.from(masterPk.toBytes(), byte => byte.toString(16).padStart(2, '0')).join(''),
+                    childMismatches,
+                    mismatches,
+                    puzzleHashMismatches,
+                    batch,
+                    expectedAddress,
+                    addressMatches: batch.hitAddress === expectedAddress,
+                    child0ExpectedHex: Array.from(child0.toBytes(), byte => byte.toString(16).padStart(2, '0')).join(''),
+                    child0ActualHex: Array.from(gpuChildBytes.slice(0, 48), byte => byte.toString(16).padStart(2, '0')).join(''),
+                };
+                output.textContent = JSON.stringify(result, null, 2);
+                document.title = childMismatches.length === 0 &&
+                    mismatches.length === 0 &&
+                    puzzleHashMismatches.length === 0 &&
+                    result.addressMatches
+                    ? 'DONE - GPU differential test'
+                    : 'FAILED - GPU differential test';
+                address0.free();
+                synthetic0.free();
+                child0.free();
+                gpu.free();
+                accountPk.free();
+                masterPk.free();
+                masterSk.free();
+            } catch (error) {
+                output.textContent = error?.stack || String(error);
+                document.title = 'FAILED - GPU differential test';
+            }
+        });
+    </script>
+</body>
+</html>

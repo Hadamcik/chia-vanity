@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vanity WebGPU memory test</title>
+</head>
+<body>
+    <button id="run-batches">Run 500 batches</button>
+    <button id="run-lifecycle">Run 20 lifecycle cycles</button>
+    <button id="stop">Stop</button>
+    <pre id="output">Ready.</pre>
+    <script type="module">
+        import init, { WebGpuVanitySearch } from './pkg/webgpu_vanity_wasm.js';
+
+        const ACCOUNT_PUBLIC_KEY = 'a010d140e7c43146b5bb59695e6c444abbb62e964a535d0034351a90d1192bff0130de95f9bbc58af254c4dab4e65d3a';
+        const BATCHES = 500;
+        const LIFECYCLE_CYCLES = 20;
+        const output = document.querySelector('#output');
+        let stopping = false;
+        let running = false;
+
+        function fromHex(value) {
+            return Uint8Array.from(value.match(/.{2}/g), byte => Number.parseInt(byte, 16));
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === null) {
+                return 'unavailable';
+            }
+            return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+        }
+
+        function memorySample(label, completed, memory) {
+            const jsHeapBytes = performance.memory?.usedJSHeapSize ?? null;
+            return {
+                label,
+                completed,
+                wasmBytes: memory.buffer.byteLength,
+                jsHeapBytes,
+                wasm: formatBytes(memory.buffer.byteLength),
+                jsHeap: formatBytes(jsHeapBytes),
+            };
+        }
+
+        function render(status, samples) {
+            output.textContent = JSON.stringify({ status, samples }, null, 2);
+        }
+
+        function hasStableWasmHeap(samples, minimumCompleted) {
+            const plateau = samples.filter(sample => sample.completed >= minimumCompleted);
+            return plateau.length > 1 &&
+                plateau.every(sample => sample.wasmBytes === plateau[0].wasmBytes);
+        }
+
+        async function startTest(run) {
+            if (running) {
+                return;
+            }
+            running = true;
+            stopping = false;
+            try {
+                await run();
+            } catch (error) {
+                output.textContent = error?.stack || String(error);
+                document.title = 'FAILED - GPU memory test';
+            } finally {
+                running = false;
+            }
+        }
+
+        document.querySelector('#run-batches').addEventListener('click', () => startTest(async () => {
+            const wasm = await init();
+            const samples = [];
+            let gpu = await WebGpuVanitySearch.create(fromHex(ACCOUNT_PUBLIC_KEY));
+            samples.push(memorySample('initialized', 0, wasm.memory));
+            render('running batches', samples);
+
+            try {
+                for (let batch = 0; batch < BATCHES && !stopping; batch += 1) {
+                    await gpu.searchBatch(
+                        batch * gpu.batchCapacity,
+                        gpu.batchCapacity,
+                        'xch',
+                        'xch1qqqqqq',
+                        'qqqqqq',
+                    );
+
+                    if ((batch + 1) % 25 === 0) {
+                        samples.push(memorySample('running', batch + 1, wasm.memory));
+                        render('running batches', samples);
+                        await new Promise(requestAnimationFrame);
+                    }
+                }
+            } finally {
+                gpu.free();
+                gpu = null;
+            }
+
+            samples.push(memorySample('freed', samples.at(-1)?.completed ?? 0, wasm.memory));
+            const stable = hasStableWasmHeap(samples, 25);
+            render(
+                stopping ? 'stopped' : stable ? 'complete' : 'failed: WASM heap kept growing',
+                samples,
+            );
+            document.title = stopping
+                ? 'STOPPED - GPU memory test'
+                : stable
+                    ? 'DONE - GPU memory test'
+                    : 'FAILED - GPU memory test';
+        }));
+
+        document.querySelector('#run-lifecycle').addEventListener('click', () => startTest(async () => {
+            const wasm = await init();
+            const samples = [memorySample('before cycles', 0, wasm.memory)];
+            render('running lifecycle cycles', samples);
+
+            for (let cycle = 0; cycle < LIFECYCLE_CYCLES && !stopping; cycle += 1) {
+                let gpu = await WebGpuVanitySearch.create(fromHex(ACCOUNT_PUBLIC_KEY));
+                try {
+                    await gpu.searchBatch(
+                        cycle * gpu.batchCapacity,
+                        gpu.batchCapacity,
+                        'xch',
+                        'xch1qqqqqq',
+                        'qqqqqq',
+                    );
+                } finally {
+                    gpu.free();
+                    gpu = null;
+                }
+                samples.push(memorySample('cycle freed', cycle + 1, wasm.memory));
+                render('running lifecycle cycles', samples);
+                await new Promise(requestAnimationFrame);
+            }
+
+            const stable = hasStableWasmHeap(samples, 1);
+            render(
+                stopping ? 'stopped' : stable ? 'complete' : 'failed: lifecycle grew WASM heap',
+                samples,
+            );
+            document.title = stopping
+                ? 'STOPPED - GPU memory test'
+                : stable
+                    ? 'DONE - GPU memory test'
+                    : 'FAILED - GPU memory test';
+        }));
+
+        document.querySelector('#stop').addEventListener('click', () => {
+            stopping = true;
+        });
+    </script>
+</body>
+</html>

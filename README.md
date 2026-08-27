@@ -88,7 +88,16 @@ npx wrangler deploy
 
 The checked-in `wrangler.jsonc` points Wrangler at the already-built `dist` assets so it does not rerun `pnpm build`.
 
-Inside Sage, use **Load Sage key** to fill the current wallet master public key for public-key-only unhardened searches. Use **Load Sage private key** only when you need hardened derivation.
+Inside Sage, use **Load Sage key** for public-key-only unhardened searches through Sage's derived-public-key bridge. Use **Load Sage private key** only when you need hardened derivation or the WebGPU path.
+
+### Browser CPU and GPU search
+
+The browser app's Advanced settings let you choose `auto`, `CPU`, or `GPU (WebGPU)`:
+
+- `auto` uses WebGPU for compatible unhardened searches and otherwise uses the CPU.
+- `GPU` keeps one bounded 4,096-address batch in flight and supports unhardened derivation.
+- Every GPU match is re-derived and checked with the canonical CPU Chia wallet SDK before it is shown.
+- Hardened searches use the CPU. Sage's public-key bridge also uses the CPU because it supplies already-derived public keys rather than an account public key; importing a private key or entering key material manually supports the normal GPU path.
 
 ---
 
@@ -219,6 +228,8 @@ This is a CPU-bound, embarrassingly parallel workload:
 
 - Apple M2:
   - ~100 seconds for 4 characters after `xch1`
+
+The WebGPU result depends heavily on the browser and GPU. On the development machine, the complete integrated path sustained about 29,000 verified address candidates per second versus about 3,300/second for the multi-worker CPU path; use the in-app rate for the device you are actually searching on.
 
 ---
 
